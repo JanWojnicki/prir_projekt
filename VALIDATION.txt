@@ -1,0 +1,5 @@
+CPU/OpenMP: GNU C++20 -O3 -march=native -Wall -Wextra; no warnings.
+144 CPU/OpenMP cases + exact threshold + CLI checks: PASS, max_error=0.
+Python scripts: syntax and help checks passed.
+500 host reduction models + grid-stride coverage: PASS (not GPU validation).
+CUDA compilation, GPU execution, profiling and CMake configuration: NOT RUN; toolchain unavailable.
