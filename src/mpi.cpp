@@ -1,3 +1,8 @@
+// MPI backend. Rank 0 reads the file; window indices are split into contiguous blocks
+// (sizes differ by <= 1). Every rank receives exactly the bytes covered by its windows,
+// i.e. its block plus a W-S overlap ("halo") with the next block. Windows are owned by a
+// single rank, so no result is produced twice at block borders; results are gathered by
+// global window index (MPI_Gatherv displacements), which preserves global offsets.
 #include "common/compute.hpp"
 #include "common/io.hpp"
 #include <algorithm>
@@ -5,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 #include <mpi.h>
 namespace {
 void check(int status) {
@@ -32,12 +38,12 @@ int main(int argc, char** argv) {
             if (rank == 0) c05::print_usage(argv[0]);
             check(MPI_Finalize()); return 0;
         }
-        if (options.mode != "naive") throw std::invalid_argument("MPI supports --mode naive");
         if (options.threads > 1) throw std::invalid_argument("MPI backend uses one thread per rank");
         check(MPI_Barrier(MPI_COMM_WORLD));
         const double total_start = MPI_Wtime();
         std::vector<std::uint8_t> bytes;
         if (rank == 0) bytes = c05::read_binary(options.input);
+        const double read_end = MPI_Wtime();
         std::uint64_t size = bytes.size();
         check(MPI_Bcast(&size, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD));
         if (size > std::numeric_limits<std::size_t>::max()) throw std::runtime_error("Input too large");
@@ -55,15 +61,21 @@ int main(int argc, char** argv) {
         }
         const auto r = static_cast<std::size_t>(rank);
         std::vector<std::uint8_t> local(static_cast<std::size_t>(byte_counts[r]));
-        // Point-to-point distribution permits overlapping halo reads on the root.
+        // Point-to-point distribution: halo regions overlap on the root, which
+        // MPI_Scatterv does not permit (no root location may be read twice).
+        const double distribute_start = MPI_Wtime();
         if (rank == 0) {
             if (!local.empty()) std::copy_n(bytes.data(), local.size(), local.data());
+            std::vector<MPI_Request> requests;
             for (int destination = 1; destination < ranks; ++destination) {
                 const auto d = static_cast<std::size_t>(destination);
-                if (byte_counts[d])
-                    check(MPI_Send(bytes.data() + byte_offsets[d], byte_counts[d], MPI_UINT8_T,
-                                   destination, 10, MPI_COMM_WORLD));
+                if (!byte_counts[d]) continue;
+                requests.emplace_back();
+                check(MPI_Isend(bytes.data() + byte_offsets[d], byte_counts[d], MPI_UINT8_T,
+                                destination, 10, MPI_COMM_WORLD, &requests.back()));
             }
+            if (!requests.empty())
+                check(MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE));
         } else if (byte_counts[r]) {
             check(MPI_Recv(local.data(), byte_counts[r], MPI_UINT8_T, 0, 10,
                            MPI_COMM_WORLD, MPI_STATUS_IGNORE));
@@ -73,17 +85,19 @@ int main(int argc, char** argv) {
         if (rank == 0) results.entropy.resize(layout.count);
         check(MPI_Barrier(MPI_COMM_WORLD));
         const double core_start = MPI_Wtime();
-        for (std::size_t i = 0; i < local_entropy.size(); ++i)
-            local_entropy[i] = c05::window_entropy(
-                std::span<const std::uint8_t>(local).subspan(i * options.step, options.window));
+        c05::compute_mode(options.mode, local, options.window, options.step, local_entropy);
         const double local_core = MPI_Wtime() - core_start;
-        double core = 0;
-        check(MPI_Reduce(&local_core, &core, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
+        std::array<double, 2> core_minmax{-local_core, local_core}, reduced{};
+        check(MPI_Reduce(core_minmax.data(), reduced.data(), 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
+        const double gather_start = MPI_Wtime();
         check(MPI_Gatherv(local_entropy.data(), counts[r], MPI_DOUBLE, results.entropy.data(),
                          counts.data(), offsets.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD));
+        const double gather_end = MPI_Wtime();
+        std::size_t events = 0;
         if (rank == 0) {
             results.boundaries = c05::detect_boundaries(results.entropy, options.step, options.threshold);
             c05::write_csv(options.output, results.entropy, options.step, options.threshold);
+            events = c05::write_events_if_requested(options, results.boundaries, results.entropy);
         }
         check(MPI_Barrier(MPI_COMM_WORLD));
         const double local_total = MPI_Wtime() - total_start;
@@ -91,7 +105,12 @@ int main(int argc, char** argv) {
         check(MPI_Reduce(&local_total, &total, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
         if (rank == 0) {
             c05::report_layout(static_cast<std::size_t>(size), options);
-            c05::report_timing("mpi", options, layout.count, results.boundaries.size(), core, total);
+            c05::report_timing("mpi", options, layout.count, results.boundaries.size(), events,
+                               reduced[1], total);
+            std::cerr << "mpi_ranks=" << ranks << " T_read_s=" << read_end - total_start
+                      << " T_distribute_s=" << core_start - distribute_start
+                      << " T_gather_s=" << gather_end - gather_start
+                      << " T_core_min_rank_s=" << -reduced[0] << '\n';
         }
         check(MPI_Finalize()); return 0;
     } catch (const std::exception& e) {

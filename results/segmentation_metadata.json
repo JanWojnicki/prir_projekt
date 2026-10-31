@@ -1,0 +1,7 @@
+{
+  "implementation": "Ref-Incremental",
+  "window_size": 65536,
+  "step_size": 16384,
+  "threshold": 0.1,
+  "file_size_bytes": 150000000
+}

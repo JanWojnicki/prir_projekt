@@ -1,0 +1,18 @@
+{
+  "constant_bytes.bin": {
+    "size_bytes": 100000000,
+    "sha256": "a993f8c574e0fea8c1cdcbcd9408d9e2e107ee6e4d120edcfa11decd53fa0cae"
+  },
+  "uniform_random.bin": {
+    "size_bytes": 100000000,
+    "sha256": "c0bb4bf1fdbde8db76b6a0978d27e259b1d803baba125e31e08f74fc6ce0070b"
+  },
+  "mixed_segmented.bin": {
+    "size_bytes": 150000000,
+    "sha256": "7a15b6aafa5d4dda3bc2c825206d0d72fa4c4714ef70a4e77606a16dfcbcefc2"
+  },
+  "multi_segmented.bin": {
+    "size_bytes": 150000000,
+    "sha256": "fa5c9e458b7de4bc0d9cfd3f770f50e88af51ec62dbd8b406331eda6acf62075"
+  }
+}

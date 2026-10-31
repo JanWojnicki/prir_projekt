@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host model of CUDA reduction and grid-stride indexing, not a GPU test."""
+"""Host model of CUDA reduction, grid-stride indexing, and sliding shared-histogram updates."""
 import math
 import random
 
@@ -46,7 +46,39 @@ def main():
                             break
                         index += stride
             assert sorted(flags) == list(range(count))
-    print(f'PASS: {cases} host reduction models; grid-stride unique coverage. NOT GPU validation.')
+    # Verify chunked incremental shared-histogram model (32-bit unsigned modular arithmetic).
+    data = rng.randbytes(4096)
+    for window, step, per_block in [(64, 16, 7), (128, 32, 13), (64, 64, 5), (32, 48, 4)]:
+        count = 1 + (len(data) - window) // step
+        chunks = (count + per_block - 1) // per_block
+        got = [None] * count
+        for chunk in range(chunks):
+            first = chunk * per_block
+            last = min(count, first + per_block)
+            hist = [0] * 256
+            for b in data[first * step:first * step + window]:
+                hist[b] = (hist[b] + 1) & 0xFFFFFFFF
+            got[first] = tuple(hist)
+            for i in range(first + 1, last):
+                old_start = (i - 1) * step
+                if step < window:
+                    # Simulate arbitrary interleaving of atomicSub and atomicAdd mod 2^32.
+                    ops = [(data[old_start + j], -1) for j in range(step)] + \
+                          [(data[old_start + window + j], +1) for j in range(step)]
+                    rng.shuffle(ops)
+                    for b, delta in ops:
+                        hist[b] = (hist[b] + delta) & 0xFFFFFFFF
+                else:
+                    hist = [0] * 256
+                    for b in data[i * step:i * step + window]:
+                        hist[b] = (hist[b] + 1) & 0xFFFFFFFF
+                got[i] = tuple(hist)
+        for i in range(count):
+            expected = [0] * 256
+            for b in data[i * step:i * step + window]:
+                expected[b] += 1
+            assert list(got[i]) == expected
+    print(f'PASS: {cases} host reduction models + incremental chunking + grid-stride coverage.')
 
 
 if __name__ == '__main__':

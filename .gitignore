@@ -1,0 +1,74 @@
+# =============================================================================
+# C05 Entropy & Binary File Segmentation – Git Ignore Configuration
+# Commits only source code, scripts, tests, dataset manifests, raw measurement
+# CSVs/JSONs, generated plots, documentation, and final reports (.md/.docx/.pdf).
+# =============================================================================
+
+# CMake & compiled build directories / binaries
+build/
+build-*/
+cmake-build-*/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+Makefile
+*.ninja
+.ninja_deps
+.ninja_log
+Testing/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.ilk
+*.pdb
+*.exp
+entropy_ref
+entropy_omp
+entropy_mpi
+entropy_cuda
+
+# Large generated binary datasets (reproducible via scripts/generate_datasets.py)
+# Keep JSON manifests and ground-truth boundary definitions!
+datasets/*.bin
+!datasets/*.json
+
+# Per-process benchmark execution logs and scratch files
+# Keep all raw measurement CSVs, JSON metadata, and plots in results/!
+results/logs/
+results/last_output.csv
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Microsoft Office temporary lock files
+~$*.docx
+~$*.xlsx
+~$*.pptx
+*.tmp
+*.bak
+
+# IDE and OS-specific files
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

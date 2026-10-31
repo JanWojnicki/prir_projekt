@@ -1,0 +1,18 @@
+{
+  "source_csv": "/workspace/results/raw_results.csv",
+  "selection": {
+    "csv": "/workspace/results/raw_results.csv",
+    "output_dir": "/workspace/results/plots",
+    "allow_partial": false,
+    "dataset": "mixed_segmented.bin",
+    "window": 65536,
+    "step_divisor": 4,
+    "omp_p": 12,
+    "mpi_p": 6,
+    "cuda_block": 256
+  },
+  "warnings": [],
+  "png_dpi": 300,
+  "pdf": "vector graphics",
+  "speedup": "ratio of medians; min-max conservative envelope; baseline same backend p=1"
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare naive/incremental CSVs, or execute reference edge-case tests."""
+"""Compare naive/incremental CSVs, or execute reference and OpenMP edge-case tests."""
 import argparse
 from collections import Counter
 import csv
@@ -30,6 +30,57 @@ def load_csv(path):
                 raise AssertionError('offsets must be strictly increasing')
             rows.append((offset, h, delta, flag))
         return rows
+
+
+def load_events_csv(path):
+    expected_fields = [
+        'event', 'first_window', 'last_window', 'region_start', 'region_end',
+        'estimated_offset', 'peak_window', 'peak_delta',
+        'entropy_before', 'entropy_after', 'net_delta'
+    ]
+    with Path(path).open(newline='', encoding='utf-8') as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames != expected_fields:
+            raise AssertionError(f'invalid events CSV header: {path}')
+        events = []
+        for idx, row in enumerate(reader):
+            ev = int(row['event'])
+            fw, lw = int(row['first_window']), int(row['last_window'])
+            rs, re_ = int(row['region_start']), int(row['region_end'])
+            est = int(row['estimated_offset'])
+            pw = int(row['peak_window'])
+            pdelta = float(row['peak_delta'])
+            hb, ha, net = float(row['entropy_before']), float(row['entropy_after']), float(row['net_delta'])
+            if ev != idx or fw <= 0 or lw < fw or not (fw <= pw <= lw):
+                raise AssertionError(f'invalid event indices: {row}')
+            if rs < 0 or re_ <= rs or est != rs + (re_ - rs) // 2:
+                raise AssertionError(f'invalid event region: {row}')
+            if abs((ha - hb) - net) >= EPS:
+                raise AssertionError(f'inconsistent net_delta: {row}')
+            events.append((ev, fw, lw, rs, re_, est, pw, pdelta, hb, ha, net))
+        return events
+
+
+def verify_events_against_rows(rows, events, window, step):
+    flagged = [i for i, r in enumerate(rows) if r[3] == 1]
+    runs = []
+    for idx in flagged:
+        if runs and idx == runs[-1][-1] + 1:
+            runs[-1].append(idx)
+        else:
+            runs.append([idx])
+    if len(runs) != len(events):
+        raise AssertionError(f'event count mismatch: {len(runs)} != {len(events)}')
+    for run_indices, ev in zip(runs, events):
+        _, fw, lw, rs, re_, est, pw, pdelta, hb, ha, _ = ev
+        if fw != run_indices[0] or lw != run_indices[-1]:
+            raise AssertionError(f'event window bounds mismatch: {ev} vs {run_indices}')
+        if rs != (fw - 1) * step or re_ != lw * step + window:
+            raise AssertionError(f'event byte region mismatch: {ev}')
+        if abs(hb - rows[fw - 1][1]) >= EPS or abs(ha - rows[lw][1]) >= EPS:
+            raise AssertionError(f'event before/after entropy mismatch: {ev}')
+        if abs(pdelta - rows[pw][2]) >= EPS:
+            raise AssertionError(f'event peak_delta mismatch: {ev}')
 
 
 def compare(a, b):
@@ -78,14 +129,18 @@ def suite(exe, omp_exe=None):
     with tempfile.TemporaryDirectory(prefix='c05_test_') as directory:
         root = Path(directory)
         source = root / 'input.bin'
+        events_path = root / 'events.csv'
         for data in fixtures:
             source.write_bytes(data)
             for window, step in settings:
                 for threshold in (0.0, 0.1, 8.0):
-                    a, stderr = run(exe, source, root / 'naive.csv', window, step, threshold, 'naive')
+                    a, stderr = run(exe, source, root / 'naive.csv', window, step, threshold,
+                                    'naive', ('--events', str(events_path)))
                     b, _ = run(exe, source, root / 'inc.csv', window, step, threshold, 'incremental')
                     maximum = max(maximum, compare(a, b))
                     compare(a, oracle(data, window, step, threshold))
+                    events = load_events_csv(events_path)
+                    verify_events_against_rows(a, events, window, step)
                     count = 0 if len(data) < window else 1 + (len(data) - window) // step
                     trailing = len(data) if count == 0 else len(data) - ((count - 1) * step + window)
                     gaps = (count - 1) * max(0, step - window) if count else 0
@@ -93,12 +148,18 @@ def suite(exe, omp_exe=None):
                         raise AssertionError('incorrect trailing-byte report')
                     if f'uncovered_gap_bytes={gaps}' not in stderr:
                         raise AssertionError('incorrect gap-byte report')
+                    if f'events={len(events)}' not in stderr:
+                        raise AssertionError('incorrect events report')
                     if 'T_core_s=' not in stderr or 'T_total_s=' not in stderr:
                         raise AssertionError('missing timing report')
                     if omp_exe:
-                        c, _ = run(omp_exe, source, root / 'omp.csv', window, step,
-                                   threshold, 'naive', ('--threads', '2'))
-                        compare(a, c)
+                        for omp_mode in ('naive', 'incremental'):
+                            for threads in ('1', '2', '4'):
+                                c, _ = run(omp_exe, source, root / 'omp.csv', window, step,
+                                           threshold, omp_mode,
+                                           ('--threads', threads, '--events', str(events_path)))
+                                maximum = max(maximum, compare(a, c))
+                                verify_events_against_rows(c, load_events_csv(events_path), window, step)
                     cases += 1
         source.write_bytes(b'\x00\x00\x00\x01')
         a, _ = run(exe, source, root / 'exact.csv', 2, 2, 1.0, 'naive')
@@ -122,7 +183,7 @@ def suite(exe, omp_exe=None):
             raise AssertionError('input overwrite was accepted')
         if source.read_bytes() != b'\x00\x00\x00\x01':
             raise AssertionError('input was modified')
-    print(f'PASS: {cases} fixture cases + exact threshold + CLI checks; max_error={maximum:.17g}')
+    print(f'PASS: {cases} fixture cases + exact threshold + events + CLI checks; max_error={maximum:.17g}')
 
 
 def main():

@@ -1,0 +1,9 @@
+implementation,mode,window_size,step_size,max_abs_diff_vs_ref_naive,mean_abs_diff_vs_ref_naive,identical_boundary_flags
+Ref-Naive,naive,65536,16384,0.0,0.0,True
+Ref-Incremental,incremental,65536,16384,0.0,0.0,True
+OMP,naive,65536,16384,0.0,0.0,True
+OMP-Incremental,incremental,65536,16384,0.0,0.0,True
+MPI,naive,65536,16384,0.0,0.0,True
+MPI-Incremental,incremental,65536,16384,0.0,0.0,True
+CUDA,naive,65536,16384,1.687538997430238e-14,1.0072799238060013e-15,True
+CUDA-Incremental,incremental,65536,16384,1.687538997430238e-14,1.0072799238060013e-15,True

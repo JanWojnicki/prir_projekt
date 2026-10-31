@@ -1,56 +1,29 @@
+// Sequential reference: one thread, naive or incremental histogram.
 #include "common/compute.hpp"
 #include "common/io.hpp"
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
-namespace c05 {
-void compute_naive(std::span<const std::uint8_t> bytes, std::size_t window,
-                   std::size_t step, std::span<double> output) {
-    for (std::size_t i = 0; i < output.size(); ++i)
-        output[i] = window_entropy(bytes.subspan(i * step, window));
-}
-void compute_incremental(std::span<const std::uint8_t> bytes, std::size_t window,
-                         std::size_t step, std::span<double> output) {
-    if (output.empty()) return;
-    Histogram histogram{};
-    for (std::size_t j = 0; j < window; ++j) ++histogram[bytes[j]];
-    output[0] = shannon_entropy(histogram, window);
-    for (std::size_t i = 1; i < output.size(); ++i) {
-        const auto old_start = (i - 1) * step;
-        const auto new_start = i * step;
-        if (step < window) {
-            for (std::size_t j = 0; j < step; ++j) {
-                --histogram[bytes[old_start + j]];
-                ++histogram[bytes[old_start + window + j]];
-            }
-        } else {
-            histogram.fill(0);
-            for (std::size_t j = 0; j < window; ++j) ++histogram[bytes[new_start + j]];
-        }
-        output[i] = shannon_entropy(histogram, window);
-    }
-}
-int run_reference(int argc, char** argv) {
+int main(int argc, char** argv) {
     try {
-        const auto options = parse_options(argc, argv);
-        if (options.help) { print_usage(argv[0]); return 0; }
+        const auto options = c05::parse_options(argc, argv);
+        if (options.help) { c05::print_usage(argv[0]); return 0; }
         if (options.threads > 1) throw std::invalid_argument("Reference is single-threaded");
         using Clock = std::chrono::steady_clock;
         const auto total_start = Clock::now();
-        const auto bytes = read_binary(options.input);
-        const auto layout = window_layout(bytes.size(), options.window, options.step);
-        Results results;
+        const auto bytes = c05::read_binary(options.input);
+        const auto layout = c05::window_layout(bytes.size(), options.window, options.step);
+        c05::Results results;
         results.entropy.resize(layout.count);
         const auto core_start = Clock::now();
-        if (options.mode == "naive")
-            compute_naive(bytes, options.window, options.step, results.entropy);
-        else compute_incremental(bytes, options.window, options.step, results.entropy);
+        c05::compute_mode(options.mode, bytes, options.window, options.step, results.entropy);
         const auto core_end = Clock::now();
-        results.boundaries = detect_boundaries(results.entropy, options.step, options.threshold);
-        write_csv(options.output, results.entropy, options.step, options.threshold);
+        results.boundaries = c05::detect_boundaries(results.entropy, options.step, options.threshold);
+        c05::write_csv(options.output, results.entropy, options.step, options.threshold);
+        const auto events = c05::write_events_if_requested(options, results.boundaries, results.entropy);
         const auto total_end = Clock::now();
-        report_layout(bytes.size(), options);
-        report_timing("reference", options, layout.count, results.boundaries.size(),
+        c05::report_layout(bytes.size(), options);
+        c05::report_timing("reference", options, layout.count, results.boundaries.size(), events,
             std::chrono::duration<double>(core_end - core_start).count(),
             std::chrono::duration<double>(total_end - total_start).count());
         return 0;
@@ -58,8 +31,4 @@ int run_reference(int argc, char** argv) {
         std::cerr << "Error: " << e.what() << '\n';
         return 1;
     }
-}
-}
-int main(int argc, char** argv) {
-    return c05::run_reference(argc, argv);
 }

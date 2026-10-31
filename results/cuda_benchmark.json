@@ -1,0 +1,140 @@
+{
+  "window": 65536,
+  "step": 65536,
+  "threads": 256,
+  "modes": [
+    "naive",
+    "incremental"
+  ],
+  "repeats": 5,
+  "results": [
+    {
+      "file": "constant_bytes.bin",
+      "mode": "naive",
+      "size_bytes": 100000000,
+      "entropy_kernel_seconds": [
+        0.00756767988205,
+        0.00685731220245,
+        0.00694313621521,
+        0.00681801605225,
+        0.00676815986633
+      ],
+      "logical_GBps": [
+        13.206478281,
+        14.5745733969,
+        14.3944172924,
+        14.6585750509,
+        14.7665542738
+      ],
+      "median_entropy_kernel_seconds": 0.00685731220245,
+      "median_logical_GBps": 14.5745733969
+    },
+    {
+      "file": "constant_bytes.bin",
+      "mode": "incremental",
+      "size_bytes": 100000000,
+      "entropy_kernel_seconds": [
+        0.00691555213928,
+        0.00685388803482,
+        0.00696006393433,
+        0.00683411216736,
+        0.00745507192612
+      ],
+      "logical_GBps": [
+        14.451832332,
+        14.5818547797,
+        14.3594083248,
+        14.6240502866,
+        13.4059605314
+      ],
+      "median_entropy_kernel_seconds": 0.00691555213928,
+      "median_logical_GBps": 14.451832332
+    },
+    {
+      "file": "uniform_random.bin",
+      "mode": "naive",
+      "size_bytes": 100000000,
+      "entropy_kernel_seconds": [
+        0.00304121589661,
+        0.00297523188591,
+        0.00254998397827,
+        0.00347871994972,
+        0.00352355194092
+      ],
+      "logical_GBps": [
+        32.8626455332,
+        33.5914657521,
+        39.1933442922,
+        28.7296481017,
+        28.3641057875
+      ],
+      "median_entropy_kernel_seconds": 0.00304121589661,
+      "median_logical_GBps": 32.8626455332
+    },
+    {
+      "file": "uniform_random.bin",
+      "mode": "incremental",
+      "size_bytes": 100000000,
+      "entropy_kernel_seconds": [
+        0.00285334396362,
+        0.00300457596779,
+        0.00294441604614,
+        0.00267299199104,
+        0.00285187196732
+      ],
+      "logical_GBps": [
+        35.0264115628,
+        33.2633959239,
+        33.9430292573,
+        37.3897117294,
+        35.0444904769
+      ],
+      "median_entropy_kernel_seconds": 0.00285334396362,
+      "median_logical_GBps": 35.0264115628
+    },
+    {
+      "file": "mixed_segmented.bin",
+      "mode": "naive",
+      "size_bytes": 150000000,
+      "entropy_kernel_seconds": [
+        0.00621798419952,
+        0.00570284795761,
+        0.00597670412064,
+        0.00574988794327,
+        0.00706879997253
+      ],
+      "logical_GBps": [
+        24.1149483801,
+        26.2932431505,
+        25.088470999,
+        26.0781374315,
+        21.2124219928
+      ],
+      "median_entropy_kernel_seconds": 0.00597670412064,
+      "median_logical_GBps": 25.088470999
+    },
+    {
+      "file": "mixed_segmented.bin",
+      "mode": "incremental",
+      "size_bytes": 150000000,
+      "entropy_kernel_seconds": [
+        0.00577817583084,
+        0.00603132820129,
+        0.00625788784027,
+        0.00577942419052,
+        0.00579040002823
+      ],
+      "logical_GBps": [
+        25.9504681737,
+        24.8612516175,
+        23.9611785681,
+        25.9448628543,
+        25.8956837643
+      ],
+      "median_entropy_kernel_seconds": 0.00579040002823,
+      "median_logical_GBps": 25.8956837643
+    }
+  ],
+  "method": "Separate processes, one discarded run per dataset/mode; no in-process warm-up.",
+  "throughput": "Logical window bytes / histogram+entropy kernel time; not DRAM bandwidth."
+}

@@ -1,0 +1,17 @@
+dataset,window_size,step_size,threshold,ground_truth_boundaries,raw_flagged_windows,merged_events,matched_events,false_positive_events,mean_raw_distance_bytes,max_raw_distance_bytes,mean_event_distance_bytes,max_event_distance_bytes,max_event_distance_over_step
+mixed_segmented.bin,1024,1024,0.1,2,34,31,2,29,192.0,256,192.0,256,0.25
+mixed_segmented.bin,1024,256,0.1,2,8,2,2,0,64.0,128,64.0,128,0.5
+mixed_segmented.bin,4096,4096,0.1,2,3,2,2,0,192.0,256,960.0,1792,0.4375
+mixed_segmented.bin,4096,1024,0.1,2,9,2,2,0,192.0,256,192.0,256,0.25
+mixed_segmented.bin,16384,16384,0.1,2,4,2,2,0,5952.0,7936,2240.0,4224,0.2578125
+mixed_segmented.bin,16384,4096,0.1,2,9,2,2,0,192.0,256,960.0,1792,0.4375
+mixed_segmented.bin,65536,65536,0.1,2,4,2,2,0,5952.0,7936,26816.0,28800,0.439453125
+mixed_segmented.bin,65536,16384,0.1,2,10,2,2,0,5952.0,7936,2240.0,4224,0.2578125
+multi_segmented.bin,1024,1024,0.1,4,9,5,4,1,320.0,512,192.0,384,0.375
+multi_segmented.bin,1024,256,0.1,4,17,4,4,0,64.0,128,32.0,128,0.5
+multi_segmented.bin,4096,4096,0.1,4,8,4,4,0,704.0,1408,1344.0,1920,0.46875
+multi_segmented.bin,4096,1024,0.1,4,18,5,5,0,512.0,896,256.0,640,0.625
+multi_segmented.bin,16384,16384,0.1,4,8,4,4,0,3776.0,4864,4416.0,5504,0.3359375
+multi_segmented.bin,16384,4096,0.1,4,17,4,4,0,1344.0,3328,1152.0,3328,0.8125
+multi_segmented.bin,65536,65536,0.1,4,7,4,4,0,9536.0,19072,20800.0,29184,0.4453125
+multi_segmented.bin,65536,16384,0.1,4,18,4,4,0,5440.0,11520,5760.0,11520,0.703125

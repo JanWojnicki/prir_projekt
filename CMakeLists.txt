@@ -69,15 +69,28 @@ include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 QUIET COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
-    add_test(NAME reference_correctness COMMAND ${Python3_EXECUTABLE}
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_correctness.py
-      --exe $<TARGET_FILE:entropy_ref>)
+    add_test(NAME host_model_correctness COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cuda_model.py)
+    if(TARGET entropy_omp)
+      add_test(NAME reference_and_openmp_correctness COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_correctness.py
+        --exe $<TARGET_FILE:entropy_ref> --omp-exe $<TARGET_FILE:entropy_omp>)
+    else()
+      add_test(NAME reference_correctness COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_correctness.py
+        --exe $<TARGET_FILE:entropy_ref>)
+    endif()
+    if(TARGET entropy_mpi)
+      add_test(NAME mpi_correctness COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_mpi.py
+        --ref-exe $<TARGET_FILE:entropy_ref> --mpi-exe $<TARGET_FILE:entropy_mpi>
+        --mpiexec ${MPIEXEC_EXECUTABLE})
+    endif()
+    if(TARGET entropy_cuda)
+      add_test(NAME cuda_correctness COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_cuda.py
+        --ref-exe $<TARGET_FILE:entropy_ref> --cuda-exe $<TARGET_FILE:entropy_cuda>)
+      set_tests_properties(cuda_correctness PROPERTIES LABELS "gpu")
+    endif()
   endif()
-endif()
-
-if(BUILD_TESTING AND Python3_Interpreter_FOUND AND TARGET entropy_cuda)
-  add_test(NAME cuda_correctness COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_cuda.py
-    --ref-exe $<TARGET_FILE:entropy_ref> --cuda-exe $<TARGET_FILE:entropy_cuda>)
-  set_tests_properties(cuda_correctness PROPERTIES LABELS "gpu")
 endif()

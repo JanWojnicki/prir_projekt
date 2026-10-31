@@ -1,5 +1,7 @@
-CPU/OpenMP: GNU C++20 -O3 -march=native -Wall -Wextra; no warnings.
-144 CPU/OpenMP cases + exact threshold + CLI checks: PASS, max_error=0.
-Python scripts: syntax and help checks passed.
-500 host reduction models + grid-stride coverage: PASS (not GPU validation).
-CUDA compilation, GPU execution, profiling and CMake configuration: NOT RUN; toolchain unavailable.
+Environment: Linux (Ubuntu 24.04 / kernel 6.6 WSL2), GCC 13.3.0 (C++20, OpenMP), OpenMPI 4.1.6, NVIDIA CUDA 12.6.85 (nvcc), NVIDIA GeForce GTX 1660 (compute capability 7.5), AMD Ryzen 5 2600 (6 cores / 12 threads, 16 GB RAM).
+Build: CMake 3.28.3 + Ninja, Release (-O3 -march=native -Wall -Wextra, CUDA -O3 -lineinfo -arch=sm_75); all 4 targets (entropy_ref, entropy_omp, entropy_mpi, entropy_cuda) built cleanly with 0 warnings.
+1. host_model_correctness: 500 host reduction models + incremental modular chunking + grid-stride unique coverage: PASS.
+2. reference_and_openmp_correctness: 144 fixture cases (Ref-Naive, Ref-Incremental, OMP-Naive, OMP-Incremental for 1,2,4 threads) + exact threshold + --events verification + CLI validation: PASS, max_error=0.
+3. mpi_correctness: 128 MPI cases across ranks p in {1,2,4,7} (including p > windows) for both naive and incremental modes + exact threshold + --events verification: PASS, max_error=0.
+4. cuda_correctness: 112 GPU cases on NVIDIA GeForce GTX 1660 across blocks {64,128,256,512,1024} for both naive and incremental modes + exact threshold + --events verification: PASS, max_error=3.5527136788005009e-15 (< 1e-6).
+CTest summary: 4/4 tests PASSED (100%).

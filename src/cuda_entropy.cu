@@ -1,3 +1,7 @@
+// CUDA backend. Every block owns one histogram in shared memory (no histogram is shared
+// between blocks). naive: one window per block iteration, histogram rebuilt with shared
+// atomicAdd. incremental: a block processes a contiguous range of windows and slides the
+// histogram (atomicSub for leaving bytes, atomicAdd for entering bytes).
 #include "common/io.hpp"
 #include <cuda_runtime.h>
 #include <algorithm>
@@ -55,6 +59,8 @@ public:
     }
 };
 struct Measurement { double wall_seconds = 0; double event_seconds = 0; };
+// The device is idle before the phase; the stop event is queued directly after the
+// operation and the host waits for the device before reading both clocks.
 template<class Function>
 Measurement measure(Event& start, Event& stop, Function&& function) {
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -72,7 +78,32 @@ Measurement measure(Event& start, Event& stop, Function&& function) {
 }
 }
 
-// Every block owns one window at a time. All threads take every barrier.
+// Entropy of the complete shared histogram. The caller must synchronize after the last
+// histogram update. Ends with a barrier, so the histogram may be modified afterwards.
+// All threads of the block must call this function (it contains barriers).
+__device__ double block_entropy(const unsigned int* s_hist, double* s_terms, std::size_t window) {
+    const unsigned int thread = threadIdx.x;
+    for (unsigned int bin = thread; bin < 256; bin += blockDim.x) {
+        const unsigned int c = s_hist[bin];
+        if (c == 0) s_terms[bin] = 0.0;   // zero-probability bins are skipped
+        else {
+            const double p = static_cast<double>(c) / static_cast<double>(window);
+            s_terms[bin] = -p * log2(p);
+        }
+    }
+    __syncthreads();
+    // Tree reduction; the inner loop also covers blocks smaller than 256 threads.
+    for (unsigned int stride = 128; stride > 0; stride >>= 1) {
+        for (unsigned int bin = thread; bin < stride; bin += blockDim.x)
+            s_terms[bin] += s_terms[bin + stride];
+        __syncthreads();
+    }
+    const double result = s_terms[0];
+    __syncthreads();
+    return result;
+}
+
+// naive: every block owns one window at a time (grid-stride over windows).
 __global__ void histogram_entropy_kernel(const std::uint8_t* data,
     std::size_t window, std::size_t step, std::size_t count, double* d_entropy) {
     __shared__ unsigned int s_hist[256];
@@ -86,25 +117,56 @@ __global__ void histogram_entropy_kernel(const std::uint8_t* data,
         for (std::size_t j = thread; j < window; j += blockDim.x)
             atomicAdd(&s_hist[data[offset + j]], 1U);
         __syncthreads();
-        for (unsigned int bin = thread; bin < 256; bin += blockDim.x) {
-            const unsigned int c = s_hist[bin];
-            if (c == 0) s_terms[bin] = 0.0;
-            else {
-                const double p = static_cast<double>(c) / static_cast<double>(window);
-                s_terms[bin] = -p * log2(p);
-            }
-        }
-        __syncthreads();
-        for (unsigned int stride = 128; stride > 0; stride >>= 1) {
-            for (unsigned int bin = thread; bin < stride; bin += blockDim.x)
-                s_terms[bin] += s_terms[bin + stride];
-            __syncthreads();
-        }
-        if (thread == 0) d_entropy[index] = s_terms[0];
-        __syncthreads();
+        const double h = block_entropy(s_hist, s_terms, window);
+        if (thread == 0) d_entropy[index] = h;
         // Avoid overflow even when size_t is near its maximum.
         if (count - index <= static_cast<std::size_t>(gridDim.x)) break;
         index += gridDim.x;
+    }
+}
+
+// incremental: block b processes windows [b*per_block, min(count, (b+1)*per_block)).
+// Only the first window of a range is built from scratch. For S < W the next histogram
+// is obtained by removing the S leaving bytes and adding the S entering bytes. Counts
+// never underflow: every decremented byte is present in the current window.
+__global__ void incremental_entropy_kernel(const std::uint8_t* data,
+    std::size_t window, std::size_t step, std::size_t count, std::size_t per_block,
+    double* d_entropy) {
+    __shared__ unsigned int s_hist[256];
+    __shared__ double s_terms[256];
+    const unsigned int thread = threadIdx.x;
+    const std::size_t chunks = (count + per_block - 1) / per_block;
+    for (std::size_t chunk = blockIdx.x; chunk < chunks;) {
+        const std::size_t first = chunk * per_block;
+        const std::size_t last = count - first < per_block ? count : first + per_block;
+        for (unsigned int bin = thread; bin < 256; bin += blockDim.x)
+            s_hist[bin] = 0;
+        __syncthreads();
+        for (std::size_t j = thread; j < window; j += blockDim.x)
+            atomicAdd(&s_hist[data[first * step + j]], 1U);
+        __syncthreads();
+        double h = block_entropy(s_hist, s_terms, window);
+        if (thread == 0) d_entropy[first] = h;
+        for (std::size_t i = first + 1; i < last; ++i) {
+            const std::size_t old_start = (i - 1) * step;
+            if (step < window) {
+                for (std::size_t j = thread; j < step; j += blockDim.x) {
+                    atomicSub(&s_hist[data[old_start + j]], 1U);
+                    atomicAdd(&s_hist[data[old_start + window + j]], 1U);
+                }
+            } else {
+                for (unsigned int bin = thread; bin < 256; bin += blockDim.x)
+                    s_hist[bin] = 0;
+                __syncthreads();
+                for (std::size_t j = thread; j < window; j += blockDim.x)
+                    atomicAdd(&s_hist[data[i * step + j]], 1U);
+            }
+            __syncthreads();
+            h = block_entropy(s_hist, s_terms, window);
+            if (thread == 0) d_entropy[i] = h;
+        }
+        if (chunks - chunk <= static_cast<std::size_t>(gridDim.x)) break;
+        chunk += gridDim.x;
     }
 }
 
@@ -150,12 +212,11 @@ int main(int argc, char** argv) {
         const auto options = c05::parse_options(argc, argv);
         if (options.help) {
             c05::print_usage(argv[0]);
-            std::cout << "CUDA: --mode naive; --threads means threads per block, "
+            std::cout << "CUDA: --threads means threads per block, "
                          "one of 64,128,256,512,1024 (default 256).\n";
             return 0;
         }
-        if (options.mode != "naive")
-            throw std::invalid_argument("CUDA requires --mode naive (shared atomic histogram)");
+        const bool incremental = options.mode == "incremental";
         const int threads = options.threads == 0 ? 256 : options.threads;
         if (threads < 64 || threads > 1024 || (threads & (threads - 1)) != 0)
             throw std::invalid_argument("--threads must be 64,128,256,512 or 1024");
@@ -169,6 +230,7 @@ int main(int argc, char** argv) {
         std::vector<c05::Boundary> boundaries;
         Measurement h2d, kernel, detection, d2h;
         double setup_seconds = 0, cleanup_seconds = 0;
+        std::size_t grid_blocks = 0, windows_per_block = 1;
         std::string device_name = "not used (no complete windows)";
         if (layout.count != 0) {
             const auto setup_start = Clock::now();
@@ -180,6 +242,19 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("Threads exceed device limit");
             if (device.maxGridSize[0] <= 0) throw std::runtime_error("Invalid CUDA grid limit");
             device_name = device.name;
+            if (incremental && options.step < options.window) {
+                // Balance sliding amortization against SM load balancing (cap at 64 windows/chunk).
+                int per_sm = 0;
+                CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm,
+                    incremental_entropy_kernel, threads, 0));
+                const std::size_t resident = static_cast<std::size_t>(std::max(1, per_sm)) *
+                    static_cast<std::size_t>(std::max(1, device.multiProcessorCount));
+                windows_per_block = std::min<std::size_t>(64,
+                    std::max<std::size_t>(1, (layout.count + resident - 1) / resident));
+                grid_blocks = grid_size((layout.count + windows_per_block - 1) / windows_per_block, device);
+            } else {
+                grid_blocks = grid_size(layout.count, device);
+            }
             DeviceBuffer<std::uint8_t> d_bytes(bytes.size());
             DeviceBuffer<double> d_entropy(layout.count);
             DeviceBuffer<std::uint8_t> d_flags(layout.count);
@@ -189,10 +264,14 @@ int main(int argc, char** argv) {
             h2d = measure(eventStart, eventStop, [&] {
                 CHECK_CUDA(cudaMemcpy(d_bytes.data(), bytes.data(), bytes.size(), cudaMemcpyHostToDevice));
             });
-            const auto histogram_blocks = grid_size(layout.count, device);
+            const auto blocks = static_cast<unsigned int>(grid_blocks);
             kernel = measure(eventStart, eventStop, [&] {
-                histogram_entropy_kernel<<<histogram_blocks, threads>>>(d_bytes.data(),
-                    options.window, options.step, layout.count, d_entropy.data());
+                if (incremental)
+                    incremental_entropy_kernel<<<blocks, threads>>>(d_bytes.data(), options.window,
+                        options.step, layout.count, windows_per_block, d_entropy.data());
+                else
+                    histogram_entropy_kernel<<<blocks, threads>>>(d_bytes.data(),
+                        options.window, options.step, layout.count, d_entropy.data());
                 CHECK_CUDA(cudaGetLastError());
             });
             const std::size_t boundary_blocks_needed = 1 + (layout.count - 1) / 256;
@@ -227,18 +306,20 @@ int main(int argc, char** argv) {
         const double post_seconds = std::chrono::duration<double>(Clock::now() - post_start).count();
         const auto write_start = Clock::now();
         write_gpu_csv(options.output, entropy, flags, options.step);
+        const auto events = c05::write_events_if_requested(options, boundaries, entropy);
         const auto total_end = Clock::now();
         const double write_seconds = std::chrono::duration<double>(total_end - write_start).count();
         const double total_seconds = std::chrono::duration<double>(total_end - total_start).count();
         c05::report_layout(bytes.size(), options);
-        // Preserve step-1 core semantics: histogram and entropy only.
-        c05::report_timing("cuda", options, layout.count, boundaries.size(),
+        // Core = histogram + entropy kernel only (comparable with CPU T_core).
+        c05::report_timing("cuda", options, layout.count, boundaries.size(), events,
                           kernel.event_seconds, total_seconds);
         const long double logical_bytes = static_cast<long double>(layout.count) * options.window;
         const double logical_gbps = kernel.event_seconds > 0
             ? static_cast<double>(logical_bytes / kernel.event_seconds / 1.0e9L) : 0.0;
         std::cerr << std::setprecision(12)
-            << "device=\"" << device_name << "\" threads_per_block=" << threads << '\n'
+            << "device=\"" << device_name << "\" threads_per_block=" << threads
+            << " grid_blocks=" << grid_blocks << " windows_per_block=" << windows_per_block << '\n'
             << "T_gpu_compute_s=" << kernel.event_seconds + detection.event_seconds << '\n'
             << "T_read_s=" << read_seconds << " T_setup_s=" << setup_seconds
             << " T_cleanup_s=" << cleanup_seconds << '\n'

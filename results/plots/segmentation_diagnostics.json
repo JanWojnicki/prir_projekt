@@ -1,0 +1,18 @@
+{
+  "detected_raw_windows": 10,
+  "detected_merged_events": 2,
+  "ground_truth_count": 2,
+  "nearest_distances": [
+    {
+      "ground_truth_offset": 50000000,
+      "nearest_raw_window_distance_bytes": 3968,
+      "nearest_merged_event_distance_bytes": 4224
+    },
+    {
+      "ground_truth_offset": 100000000,
+      "nearest_raw_window_distance_bytes": 7936,
+      "nearest_merged_event_distance_bytes": 256
+    }
+  ],
+  "note": "Merged events collapse consecutive flagged windows overlapping one transition."
+}

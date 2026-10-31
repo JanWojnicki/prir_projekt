@@ -1,0 +1,108 @@
+{
+  "file": "mixed_segmented.bin",
+  "size_bytes": 150000000,
+  "unit": "byte",
+  "offset_convention": "zero-based start of next segment",
+  "boundaries": [
+    50000000,
+    100000000
+  ],
+  "segments": [
+    {
+      "start": 0,
+      "end_exclusive": 50000000,
+      "kind": "synthetic_ascii",
+      "population_entropy_bits_per_byte": 4.523561956057013
+    },
+    {
+      "start": 50000000,
+      "end_exclusive": 100000000,
+      "kind": "biased_random",
+      "population_entropy_bits_per_byte": 7.954649841896731
+    },
+    {
+      "start": 100000000,
+      "end_exclusive": 150000000,
+      "kind": "zeros",
+      "population_entropy_bits_per_byte": 0.0
+    }
+  ],
+  "files": {
+    "mixed_segmented.bin": {
+      "size_bytes": 150000000,
+      "boundaries": [
+        50000000,
+        100000000
+      ],
+      "segments": [
+        {
+          "start": 0,
+          "end_exclusive": 50000000,
+          "kind": "synthetic_ascii",
+          "population_entropy_bits_per_byte": 4.523561956057013
+        },
+        {
+          "start": 50000000,
+          "end_exclusive": 100000000,
+          "kind": "biased_random",
+          "population_entropy_bits_per_byte": 7.954649841896731
+        },
+        {
+          "start": 100000000,
+          "end_exclusive": 150000000,
+          "kind": "zeros",
+          "population_entropy_bits_per_byte": 0.0
+        }
+      ]
+    },
+    "multi_segmented.bin": {
+      "size_bytes": 150000000,
+      "boundaries": [
+        20000000,
+        50000000,
+        90000000,
+        120000000
+      ],
+      "segments": [
+        {
+          "start": 0,
+          "end_exclusive": 20000000,
+          "kind": "zeros",
+          "population_entropy_bits_per_byte": 0.0
+        },
+        {
+          "start": 20000000,
+          "end_exclusive": 50000000,
+          "kind": "ksymbol_4",
+          "population_entropy_bits_per_byte": 2.0
+        },
+        {
+          "start": 50000000,
+          "end_exclusive": 90000000,
+          "kind": "synthetic_ascii",
+          "population_entropy_bits_per_byte": 4.523561956057013
+        },
+        {
+          "start": 90000000,
+          "end_exclusive": 120000000,
+          "kind": "uniform_256",
+          "population_entropy_bits_per_byte": 8.0
+        },
+        {
+          "start": 120000000,
+          "end_exclusive": 150000000,
+          "kind": "ksymbol_16",
+          "population_entropy_bits_per_byte": 4.0
+        }
+      ]
+    }
+  },
+  "seed": 2026,
+  "chunk_bytes": 1000000,
+  "notes": [
+    "Synthetic ASCII, not natural-language prose.",
+    "High-entropy segment is biased random, not a compressed stream.",
+    "Window entropy depends on W and sampling; boundary detection is not guaranteed.",
+    "Reproducibility requires the same Python random implementation and chunk size."
+  ]
+}

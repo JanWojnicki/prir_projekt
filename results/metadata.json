@@ -1,0 +1,98 @@
+{
+  "created_utc": "2026-10-31T19:36:50.784691+00:00",
+  "platform": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "hardware": {
+    "platform": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "node": "db19cea8cc3c",
+    "logical_cpus": 12,
+    "cpu_model": "AMD Ryzen 5 2600 Six-Core Processor",
+    "physical_cores_per_socket": 6,
+    "ram_total_gb": 11.68
+  },
+  "cpu_count": 12,
+  "configuration_count": 134,
+  "repeats": 5,
+  "warmups_per_configuration": 1,
+  "warmup_scope": "one discarded independent process; not in-context CUDA warm-up",
+  "mpi_mode": "local shared-memory (single host: db19cea8cc3c)",
+  "canonical_resources": {
+    "omp_p": 12,
+    "mpi_p": 6,
+    "cuda_block": 256
+  },
+  "throughput_gbps": "file_size_bytes / T_core_seconds / 1e9 (input-normalized)",
+  "logical_throughput_gbps": "full_window_count * W / T_core_seconds / 1e9; not DRAM bandwidth",
+  "core_definition": "CPU histogram+entropy; CUDA T_entropy_kernel_event_s",
+  "arguments": {
+    "build_dir": "/workspace/build",
+    "datasets": "/tmp/datasets",
+    "results": "/tmp/results",
+    "repeats": 5,
+    "windows": [
+      1024,
+      4096,
+      16384,
+      65536
+    ],
+    "step_divisors": [
+      1,
+      4
+    ],
+    "omp_threads": [
+      1,
+      2,
+      4,
+      6,
+      8,
+      12
+    ],
+    "mpi_processes": [
+      1,
+      2,
+      4,
+      6,
+      8
+    ],
+    "cuda_blocks": [
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
+    "implementations": "Ref-Naive,Ref-Incremental,OMP,OMP-Incremental,MPI,MPI-Incremental,CUDA,CUDA-Incremental",
+    "threshold": 0.1,
+    "mpiexec": "mpiexec",
+    "mpi_extra": "",
+    "seed": 2026,
+    "generate_datasets": true,
+    "full_grid": false,
+    "skip_supplementary": false,
+    "no_plots": true,
+    "timeout": 0
+  },
+  "environment": {
+    "OMP_DYNAMIC": "FALSE",
+    "OMP_PROC_BIND": "TRUE",
+    "OMP_PLACES": "cores"
+  },
+  "datasets": {
+    "constant_bytes.bin": {
+      "size_bytes": 100000000,
+      "sha256": "a993f8c574e0fea8c1cdcbcd9408d9e2e107ee6e4d120edcfa11decd53fa0cae"
+    },
+    "uniform_random.bin": {
+      "size_bytes": 100000000,
+      "sha256": "c0bb4bf1fdbde8db76b6a0978d27e259b1d803baba125e31e08f74fc6ce0070b"
+    },
+    "mixed_segmented.bin": {
+      "size_bytes": 150000000,
+      "sha256": "7a15b6aafa5d4dda3bc2c825206d0d72fa4c4714ef70a4e77606a16dfcbcefc2"
+    }
+  },
+  "status": "complete",
+  "gpu": "Sat Oct 31 19:36:51 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.57.01              KMD Version: 610.88        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce GTX 1660        On  |   00000000:1C:00.0  On |                  N/A |\n|  0%   50C    P0             24W /  130W |     768MiB /   6144MiB |      6%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A              47      G   /Xwayland                             N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+  "mpi": "mpiexec (OpenRTE) 4.1.6\n\nReport bugs to http://www.open-mpi.org/community/help/\n",
+  "cxx_compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "cuda_compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2024 NVIDIA Corporation\nBuilt on Tue_Oct_29_23:50:19_PDT_2024\nCuda compilation tools, release 12.6, V12.6.85\nBuild cuda_12.6.r12.6/compiler.35059454_0\n"
+}
