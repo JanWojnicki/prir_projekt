@@ -361,6 +361,37 @@ Wyniki lokalizacji granic na zbiorach `mixed_segmented.bin` (2 granice: `50 000 
 3. **Wydajność GPU (CUDA) – rdzeń obliczeń vs czas całkowity:** W samym rdzeniu obliczeniowym (`T_core`) karta GeForce GTX 1660 osiąga do **$69{,}1\times$** przyspieszenia w trybie `naive` ($18{,}83\text{ ms}$) oraz **$129{,}8\times$** przyspieszenia w trybie `incremental` ($10{,}02\text{ ms}$, przepustowość logiczna okien **$59{,}9\text{ GB/s}$** na pliku 150 MB i do **$140{,}2\text{ GB/s}$** na plikach 50 MB) względem jednowątkowej referencji CPU. Jednocześnie pomiary $T_{\text{total}}$ pokazują, że dla pojedynczego pliku rzędu 10–180 MB narzut inicjalizacji kontekstu CUDA w sterowniku WDDM ($\approx 200\text{ ms}$) oraz transfer PCIe ($\approx 23\text{ ms}$) sprawiają, że 12-wątkowy `OMP-Incremental` osiąga krótszy całkowity czas od startu do zamknięcia pliku CSV ($166{,}6\text{ ms}$ vs $285{,}4\text{ ms}$). GPU przewyższa natomiast jednowątkowy CPU w czasie całkowitym już od $N \ge 25\text{–}50\text{ MB}$, a przy przetwarzaniu wsadowym wielu plików w jednym kontekście CUDA narzut `T_setup` ulega amortyzacji.
 4. **Wkład wariantu przyrostowego (zakres 2-osobowy):** Zastąpienie pełnego przebudowywania histogramu aktualizacją przesuwną ($\mathcal{O}(W + KS)$ zamiast $\mathcal{O}(KW)$) skraca czas rdzenia obliczeń o **$1{,}78\text{–}2{,}28\times$** dla $S = W/4$ we wszystkich czterech technologiach (CPU, OpenMP, MPI oraz CUDA), bez jakiejkolwiek utraty dokładności numerycznej.
 
+### 7.1. Instrukcja budowania, uruchomienia i odtworzenia wyników
+
+Wszystkie cztery programy przyjmują jednolity zestaw argumentów CLI (`--input`, `--window`, `--step`, `--threshold`, `--output`, opcjonalnie `--events`, `--threads`, `--mode naive|incremental`). Poniższe polecenia pozwalają od zera zbudować projekt, wygenerować zbiory danych, uruchomić testy poprawności oraz wykonać pojedyncze uruchomienia lub pełną sesję pomiarową:
+
+```sh
+# 1. Konfiguracja i kompilacja wszystkich 4 wersji (Reference, OpenMP, MPI, CUDA)
+cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=75 -DC05_REQUIRE_ALL=ON
+cmake --build build --parallel
+
+# 2. Wygenerowanie deterministycznych zbiorów testowych (seed = 2026)
+python3 scripts/generate_datasets.py --output-dir datasets
+
+# 3. Uruchomienie automatycznych testów poprawności CTest (4 zestawy testów)
+ctest --test-dir build --output-on-failure
+
+# 4. Przykładowe uruchomienie pojedyncze każdej z 4 technologii (z detekcją i scalaniem granic)
+./build/entropy_ref  --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --mode naive --output results/out_ref.csv --events results/ev_ref.csv
+./build/entropy_omp  --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --threads 12 --mode incremental --output results/out_omp.csv --events results/ev_omp.csv
+mpiexec -n 4 ./build/entropy_mpi --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --mode incremental --output results/out_mpi.csv --events results/ev_mpi.csv
+./build/entropy_cuda --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --threads 256 --mode incremental --output results/out_cuda.csv --events results/ev_cuda.csv
+
+# 5. Pełne odtworzenie wszystkich pomiarów i wykresów ze sprawozdania
+python3 scripts/benchmark_runner.py --build-dir build --datasets datasets --results results --generate-datasets
+python3 scripts/benchmark_cuda.py --exe build/entropy_cuda --datasets datasets --output results/cuda_benchmark.json
+python3 scripts/plot_results.py --csv results/raw_results.csv --output-dir results/plots
+python3 scripts/plot_entropy.py --csv results/segmentation.csv --events results/segmentation_events.csv \
+    --ground-truth results/ground_truth_boundaries.json --output results/plots/entropy_profile_cli.png
+```
+
+*(W systemie Windows z zainstalowanym Docker Desktop i NVIDIA Container Toolkit powyższy proces można również uruchomić jednym poleceniem PowerShell: `.\demo.ps1` dla szybkiego pokazu, `.\demo.ps1 -Mode test` dla testów `CTest` lub `.\demo.ps1 -Mode reproduce` dla pełnego odtworzenia eksperymentów).*
+
 ---
 
 ## 8. Podział pracy w zespole dwuosobowym

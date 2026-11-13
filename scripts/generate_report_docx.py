@@ -967,13 +967,33 @@ def build_report(root: Path, output_docx: Path):
         "wszystkich czterech technologiach bez jakiejkolwiek utraty dokładności."
     )
 
-    doc.add_heading("9.1. Polecenia budowania, testowania i odtworzenia eksperymentów", level=2)
+    doc.add_heading("9.1. Polecenia budowania, testowania, uruchomienia i odtworzenia eksperymentów", level=2)
+    add_p(
+        doc,
+        "Wszystkie cztery pliki wykonywalne (entropy_ref, entropy_omp, entropy_mpi, entropy_cuda) przyjmują "
+        "identyczny zestaw argumentów wiersza poleceń (--input, --window, --step, --threshold, --output oraz "
+        "opcjonalnie --events, --threads, --mode naive|incremental). Poniższe polecenia pozwalają od zera "
+        "zbudować projekt, wygenerować zbiory danych, uruchomić testy CTest oraz wykonać uruchomienia pokazowe "
+        "i pełne odtworzenie pomiarów:"
+    )
     add_code_block(
         doc,
+        "# 1. Konfiguracja i kompilacja wszystkich 4 wersji (Reference, OpenMP, MPI, CUDA)\n"
         "cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=75 -DC05_REQUIRE_ALL=ON\n"
-        "cmake --build build --parallel\n"
-        "ctest --test-dir build --output-on-failure\n"
+        "cmake --build build --parallel\n\n"
+        "# 2. Wygenerowanie deterministycznych zbiorów testowych (seed = 2026)\n"
+        "python3 scripts/generate_datasets.py --output-dir datasets\n\n"
+        "# 3. Uruchomienie automatycznych testów poprawności CTest (4 zestawy testów)\n"
+        "ctest --test-dir build --output-on-failure\n\n"
+        "# 4. Przykładowe uruchomienie pojedyncze każdej z 4 technologii\n"
+        "./build/entropy_ref  --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --mode naive --output results/out_ref.csv --events results/ev_ref.csv\n"
+        "./build/entropy_omp  --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --threads 12 --mode incremental --output results/out_omp.csv --events results/ev_omp.csv\n"
+        "mpiexec -n 4 ./build/entropy_mpi --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --mode incremental --output results/out_mpi.csv --events results/ev_mpi.csv\n"
+        "./build/entropy_cuda --input datasets/mixed_segmented.bin --window 4096 --step 1024 --threshold 0.1 --threads 256 --mode incremental --output results/out_cuda.csv --events results/ev_cuda.csv\n\n"
+        "# 5. Pełne odtworzenie wszystkich pomiarów i wykresów ze sprawozdania\n"
         "python3 scripts/benchmark_runner.py --build-dir build --datasets datasets --results results --generate-datasets\n"
+        "python3 scripts/benchmark_cuda.py --exe build/entropy_cuda --datasets datasets --output results/cuda_benchmark.json\n"
+        "python3 scripts/plot_results.py --csv results/raw_results.csv --output-dir results/plots\n"
         "python3 scripts/plot_entropy.py --csv results/segmentation.csv --events results/segmentation_events.csv \\\n"
         "    --ground-truth results/ground_truth_boundaries.json --output results/plots/entropy_profile_cli.png"
     )
