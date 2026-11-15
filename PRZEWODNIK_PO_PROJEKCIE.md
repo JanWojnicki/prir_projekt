@@ -89,10 +89,9 @@ Wyobraź sobie, że kładziesz na stole bardzo długi zwój pergaminu zapisany m
    Nasza ramka ma stałą szerokość – w naszym projekcie domyślnie obejmuje dokładnie **$W = 4096$ kolejnych bajtów** (czyli 4 kilobajty tekstu naraz).
 2. **Krok okna (`step_size`, oznaczany jako $S$):**
    Kładziemy ramkę na samym początku zwoju (od pozycji `0` do `4096`), badamy to, co widać w środku, i zapisujemy wynik. Następnie przesuwamy ramkę w prawo o stały krok **$S$** (np. o $S = 1024$ bajty albo o $S = 64$ bajty) i znów badamy to, co znajduje się pod lupą!
-3. **Co zrobić na samym końcu zwoju? (Polityka końca pliku):**
-   Załóżmy, że dochodzimy do końca książki i zostało nam już tylko 500 znaków, a nasza ramka ma szerokość 4096. W projekcie przewidzieliśmy dwie jasne reguły:
-   * **`drop` (pomiń końcówkę – domyślna):** oceniamy tylko pełne ramki o długości 4096 bajtów, a niepełny ogonek na końcu pomijamy, żeby nie zafałszować statystyki.
-   * **`pad` (dopełnij zerami):** jeśli badacz koniecznie chce objąć końcówkę, brakujące miejsce w ramce uzupełniamy sztucznymi zerami.
+3. **Co zrobić na samym końcu zwoju? (Obsługa niepełnego okna końcowego):**
+   Załóżmy, że dochodzimy do końca książki i zostało nam już tylko 500 znaków, a nasza ramka ma szerokość 4096. W projekcie przyjęliśmy ścisłą regułę statystyczną:
+   * **Przetwarzamy wyłącznie pełne okna (`K` pełnych ramek o długości $W$):** niepełny ogonek na końcu pliku pomijamy (aby krótsza próba nie zaniżyła sztucznie estymatora entropii i nie wywołała fałszywego alarmu granicy), a liczbę pominiętych bajtów na końcu (`omitted_trailing_bytes`) oraz ewentualnych bajtów w przerwach dla $S > W$ (`uncovered_gap_bytes`) zawsze jawnie raportujemy na wyjściu diagnostycznym `stderr`.
 
 ---
 
@@ -179,8 +178,8 @@ Co by się stało, gdyby wszyscy 12 pracowników używało **jednego wspólnego 
 
 #### Nasze rozwiązanie w projekcie: Prywatny brudnopis dla każdego!
 W naszym kodzie OpenMP (`src/openmp.cpp`) rozwiązaliśmy ten problem u samego źródła:
-* **Każdy wątek (pracownik) dostaje swój własny, prywatny zestaw 256 koszyków** (`std::array<uint32_t, 256> counts`), trzymany wyłącznie w jego własnych rękach (na jego prywatnym stosie pamięci). Zero wyrywania sobie kartek!
-* Co więcej, w trybie przyrostowym (`incremental`) użyliśmy statycznego przydziału ciągłych rozdziałów księgi (`#pragma omp for schedule(static)`). Każdy z 12 pracowników dostaje swój własny spójny rozdział, tylko **pierwsze okno swojego rozdziału liczy od zera**, a wszystkie kolejne tysiące okien w swoim rozdziale przelicza błyskawicznie metodą przyrostową!
+* **Każdy wątek (pracownik) dostaje swój własny, prywatny zestaw 256 koszyków** (`c05::Histogram histogram{}`, czyli `std::array<uint32_t, 256>`), trzymany wyłącznie w jego własnych rękach (na jego prywatnym stosie pamięci w cache L1). Zero wyrywania sobie kartek!
+* Co więcej, w trybie przyrostowym (`incremental`) dzielimy wszystkie $K$ okien na spójne rozdziały (pasma o długościach różniących się o co najwyżej 1 okno). Każdy z 12 pracowników dostaje swój własny spójny rozdział, tylko **pierwsze okno swojego rozdziału liczy od zera**, a wszystkie kolejne tysiące okien w swoim rozdziale przelicza błyskawicznie metodą przyrostową (`compute_incremental`)!
 * Dopiero gotową jedną liczbę (policzoną entropię okna nr `i`) pracownik wpisuje na swoje wyznaczone miejsce w tabeli końcowej.
 
 ---
@@ -209,15 +208,15 @@ Cały plik:       [================ Część dla Budynku 0 ================|====
                                                                 \_____________/
                                                          Okno na granicy podziału!
 
-Rozwiązanie (Zakładka / Halo = W - 1 bajtów):
+Rozwiązanie (Zakładka / Halo = W - S bajtów):
 Budynek 0 dostaje: [================ Część 0 ================ + Zakładka ]
 Budynek 1 dostaje:                                             [================ Część 1 ================]
 ```
 
-#### Nasze rozwiązanie w projekcie: Zakładka (`Overlap`) i Globalna Numeracja
+#### Nasze rozwiązanie w projekcie: Zakładka (`Halo`) i Globalna Numeracja
 W pliku `src/mpi.cpp` dyrektor (proces `Rank 0`), zanim wyśle kawałki księgi do innych budynków, robi sprytny ruch:
-1. Wyznacza dla każdego budynku dokładny zakres numerów okien: Budynek `r` odpowiada za okna od `win_start` do `win_end`.
-2. Wysyła każdemu budynkowi dokładnie taki wycinek bajtów pliku, jakiego potrzebują jego okna – czyli **wraz z zakładką (Halo) o szerokości `window_size - 1` bajtów** na styku podziału!
+1. Wyznacza dla każdego budynku dokładny zakres numerów okien: Budynek `r` odpowiada za `counts[r]` okien zaczynając od okna `offsets[r] = first`.
+2. Wysyła każdemu budynkowi (za pomocą nieblokujących wywołań `MPI_Isend` / `MPI_Waitall`) dokładnie taki wycinek bajtów pliku, jakiego potrzebują jego okna: `(count - 1) * S + W` bajtów – czyli **wraz z zakładką (Halo) o szerokości `W - S` bajtów** na styku podziału!
 3. Dzięki temu każdy budynek liczy swoje okna w 100% niezależnie (bez dzwonienia do sąsiada w trakcie pracy), żadne okno na granicy nie ginie i żadne nie jest liczone dwa razy. Na koniec budynki odsyłają jednym zbiorczym telefonem (`MPI_Gatherv`) same policzone wyniki entropii do centrali, która skleja je w idealnej kolejności.
 
 ![Skalowanie przyspieszenia i efektywności dla OpenMP oraz MPI](results/plots/speedup_efficiency_omp_mpi.png)
@@ -238,12 +237,12 @@ W technologii **CUDA** organizujemy te mrówki w oddziały:
 Karta graficzna ma swój duży magazyn główny z pamięcią (**Global Memory / VRAM** – w naszej karcie 6 GB). Jest on ogromny, ale z punktu widzenia mrówek leży dość daleko – spacer do niego zajmuje kilkaset cykli zegara.
 Gdyby wszystkie 16 381 brygad mrówek biegało z każdym pojedynczym ziarenkiem do odległego magazynu głównego, powstałby gigantyczny korek na drogach dojazdowych.
 
-Dlatego każda brygada (blok wątków) ma w swoim własnym mrowisku małą, **ultraszybką tablicę podręczną – Pamięć Współdzieloną (`__shared__ unsigned int local_hist[256]`)**. Znajduje się ona bezpośrednio w krzemie tuż obok mrówek i działa wielokrotnie szybciej niż pamięć główna!
+Dlatego każda brygada (blok wątków) ma w swoim własnym mrowisku małą, **ultraszybką tablicę podręczną – Pamięć Współdzieloną (`__shared__ unsigned int s_hist[256]`)**. Znajduje się ona bezpośrednio w krzemie tuż obok mrówek i działa wielokrotnie szybciej niż pamięć główna!
 Praca w każdej brygadzie (256 mrówek) wygląda więc w 4 krokach:
-1. **Krok 1 (Porządki):** Każda z 256 mrówek zeruje dokładnie jeden koszyk w lokalnej tablicy `__shared__` (mrówka nr 0 zeruje koszyk 0, mrówka nr 1 koszyk 1... po jednym ruchu wszystkie 256 koszyków lśni czystością!).
-2. **Krok 2 (Zliczanie bajtów):** 256 mrówek idzie tyralierą przez 4096 bajtów swojego okna (każda mrówka bierze po 16 bajtów) i wrzuca kamyki do lokalnych koszyków w pamięci współdzielonej.
-3. **Krok 3 (Obliczenie logarytmów):** Każda z 256 mrówek bierze jeden koszyk i liczy dla niego ułamek wzoru Shannona ($-p_i \log_2 p_i$).
-4. **Krok 4 (Złożenie wyniku – Redukcja drzewiasta):** Zamiast kazać jednej mrówce dodawać 256 ułamków po kolei, mrówki łączą się w pary: 256 mrówek dodaje wyniki w 128 par, potem w 64, 32, 16, 8, 4, 2 i po zaledwie **8 krokach** mrówka nr 0 trzyma w łapkach gotową entropię całego okna!
+1. **Krok 1 (Porządki):** Każda z 256 mrówek zeruje dokładnie jeden koszyk w lokalnej tablicy `__shared__ s_hist` (mrówka nr 0 zeruje koszyk 0, mrówka nr 1 koszyk 1... po jednym ruchu wszystkie 256 koszyków lśni czystością!).
+2. **Krok 2 (Zliczanie bajtów):** 256 mrówek idzie tyralierą przez bajty swojego okna i wrzuca kamyki do lokalnych koszyków w pamięci współdzielonej (w trybie przyrostowym odejmując stare bajty przez `atomicSub` i dodając nowe przez `atomicAdd`).
+3. **Krok 3 (Obliczenie logarytmów):** W funkcji `block_entropy` każda z 256 mrówek bierze jeden koszyk i liczy dla niego ułamek wzoru Shannona ($-p_i \log_2 p_i$) do tablicy `__shared__ double s_terms[256]`.
+4. **Krok 4 (Złożenie wyniku – Redukcja drzewiasta):** Zamiast kazać jednej mrówce dodawać 256 ułamków po kolei, mrówki łączą się w pary: 256 mrówek dodaje wyniki w 128 par, potem w 64, 32, 16, 8, 4, 2 i po zaledwie **8 krokach** mrówka nr 0 trzyma w łapkach gotową entropię całego okna (`s_terms[0]`)!
 
 #### Tajemnica nr 2: Kolizje atomowe (*Atomic Contention*) – Dlaczego mrówki nie lubią nudnych plików?
 W Kroku 2 kryje się jednak fascynujące zjawisko fizyczne i architektoniczne, które dokładnie zbadaliśmy w tym projekcie.
@@ -315,54 +314,54 @@ Dlatego stworzyliśmy folder **`common/`** – wspólny magazyn narzędzi, z kt�
 
 * **`common/types.hpp` (Wzory formularzy):**
   Tutaj zdefiniowaliśmy, jak wyglądają „pudełka na informacje” przekazywane między działami:
-  * `Config` – ustawienia zamówienia (jaki plik badamy, jaka szerokość lupy `W`, jaki krok `S`, czy tryb `naive` czy `incremental`).
-  * `WindowResult` – pojedynczy wiersz wyniku (numer okna, pozycja bajtu w pliku, wyliczona entropia).
-  * `BoundaryEvent` – alarm detektywa (w którym miejscu pliku nastąpił gwałtowny skok entropii i o ile bitów).
-  * `RunStats` – stoper pomiarowy (ile milisekund zajęło czytanie z dysku, ile samo liczenie, a ile zapis wyniku).
+  * `Options` – ustawienia zamówienia z wiersza poleceń (jaki plik badamy `--input`, jaka szerokość lupy `--window`, jaki krok `--step`, próg `--threshold`, tryb `--mode naive|incremental`).
+  * `WindowLayout` – rozkład pełnych okien (`count`), liczba pominiętych bajtów końcówki (`trailing_bytes`) oraz bajtów w przerwach (`uncovered_gap_bytes`).
+  * `Boundary` oraz `BoundaryEvent` – alarm detektywa: pojedyncze okno przekraczające próg oraz scalone zdarzenie zmiany entropii z wyznaczonym środkiem przejścia (`estimated_offset`).
+  * `Results` – zestaw obliczonych wartości entropii i wykrytych granic.
 * **`common/io.hpp` oraz `common/io.cpp` (Dział Zaopatrzenia i Wysyłki):**
-  Odpowiada za wczytanie pliku binarnego z dysku twardego do pamięci (`read_binary_file`), odczytanie poleceń użytkownika z wiersza poleceń (`parse_args`) oraz eleganckie zapakowanie gotowych wyników do plików tabelarycznych `.csv` i `.json`.
-* **`common/compute.hpp` oraz `common/compute.cpp` (Wzorcowe Liczydło i Detektyw Granic):**
-  Zawiera serce matematyczne na procesor CPU: funkcję `shannon_entropy` (wzorzec liczący entropię z 256 koszyków), obsługę obu trybów (`naive` i `incremental`) oraz funkcje `detect_boundaries` i `detect_boundary_events`, które przeglądają policzony wykres entropii i wypisują listę podejrzanych skoków (granic między różnymi obszarami pliku).
+  Odpowiada za wczytanie pliku binarnego z dysku twardego do pamięci (`read_binary`), odczytanie i walidację poleceń użytkownika z wiersza poleceń (`parse_options`), detekcję i scalanie granic (`detect_boundaries`, `merge_boundaries`), raportowanie czasów (`report_timing`) oraz zapis gotowych wyników do plików tabelarycznych `.csv` (`write_csv`, `write_events_csv`).
+* **`common/compute.hpp` oraz `common/compute.cpp` (Wzorcowe Liczydło):**
+  Zawiera serce matematyczne na procesor CPU: funkcję `shannon_entropy` (wzorzec liczący entropię z 256 koszyków `Histogram`), obsługę trybu naiwnego (`compute_naive`) i przyrostowego (`compute_incremental`) oraz przełącznik `compute_mode`.
 
 ---
 
-### 4.3. `src/reference.cpp` (program `entropy_ref` / `entropy_ref.cpp`) – Mistrz Wzorca
+### 4.3. `src/reference.cpp` (program `entropy_ref`) – Mistrz Wzorca
 
 To nasz **pierwszy pracownik** – starszy rzemieślnik w okularach, który pracuje sam jeden (na jednym wątku procesora CPU).
 * Nie spieszy się z dzieleniem pracy między innych. Idzie spokojnie od początku do końca pliku i z zegarmistrzowską precyzją oblicza entropię każdego okna w podwójnej precyzji (`double` – 64 bity dokładności).
 * **Po co nam powolny pracownik, skoro mamy szybszych?**
-  W nauce i inżynierii HPC szybkość bez poprawności jest bezwartościowa! Program referencyjny to nasz **wzorzec metra z Sèvres**. Zanim uwierzymy wynikom z OpenMP, MPI czy karty graficznej CUDA, porównujemy każdy z ich 16 381 wyników okno po oknie z wynikiem Mistrza Wzorca!
+  W nauce i inżynierii HPC szybkość bez poprawności jest bezwartościowa! Program referencyjny to nasz **wzorzec metra z Sèvres**. Zanim uwierzymy wynikom z OpenMP, MPI czy karty graficznej CUDA, porównujemy każdy ich wynik okno po oknie z wynikiem Mistrza Wzorca!
 * Dodatkowo `entropy_ref` mierzy też **czas pojedynczego rdzenia $T(1)$**, od którego obliczamy, ile razy szybciej (przyspieszenie $S(p) = T(1)/T(p)$) działają wersje równoległe.
 
 ---
 
-### 4.4. `src/openmp.cpp` (program `entropy_omp` / `entropy_omp.cpp`) – Pracownicy w jednym pokoju
+### 4.4. `src/openmp.cpp` (program `entropy_omp`) – Pracownicy w jednym pokoju
 
 To nasza hala wielowątkowa na procesorze CPU.
-* Używa dyrektyw `#pragma omp parallel`, aby obudzić wszystkie dostępne wątki procesora (od 1 do 12 wątków).
-* Każdy pracownik tworzy swój **prywatny zestaw 256 koszyków** (żeby uniknąć opisanej wcześniej kłótni o ten sam ołówek – *False Sharing*).
+* Używa dyrektywy `#pragma omp parallel`, aby obudzić wszystkie dostępne wątki procesora (od 1 do 12 wątków).
+* Każdy pracownik tworzy na stosie swój **prywatny zestaw 256 koszyków** (`c05::Histogram histogram{}`), żeby uniknąć opisanej wcześniej kłótni o ten sam ołówek (*Data Race* oraz *False Sharing*).
 * Posiada dwie ścieżki:
-  1. W trybie **naiwnym (`naive`)** okna są rozdawane pracownikom dynamicznie w paczkach po 64 sztuki (`schedule(dynamic, 64)`), więc jeśli któryś pracownik skończy swoją paczkę wcześniej, od razu bierze kolejną.
-  2. W trybie **przyrostowym (`incremental`)** każdy pracownik dostaje jeden spójny rozdział (`schedule(static)`), liczy pierwsze okno od zera, a przez resztę rozdziału mknie z prędkością ponaddźwiękową, tylko odejmując stare bajty i dodając nowe!
+  1. W trybie **naiwnym (`naive`)** okna są rozdawane pracownikom po równo dyrektywą `#pragma omp for schedule(static)`, ponieważ każde okno o stałej szerokości $W$ wymaga dokładnie tyle samo pracy.
+  2. W trybie **przyrostowym (`incremental`)** każdy pracownik dostaje jeden spójny rozdział okien (`first .. first + count`), liczy pierwsze okno od zera, a przez resztę rozdziału mknie z prędkością ponaddźwiękową w funkcji `compute_incremental`, tylko odejmując stare bajty i dodając nowe!
 
 ---
 
-### 4.5. `src/mpi.cpp` (program `entropy_mpi` / `entropy_mpi.cpp`) – Pracownicy w oddzielnych budynkach
+### 4.5. `src/mpi.cpp` (program `entropy_mpi`) – Pracownicy w oddzielnych budynkach
 
 To kod dla systemu rozproszonego MPI, w którym wiele niezależnych procesów współpracuje przez komunikaty.
-* **Proces główny (`Rank 0` – Dyrektor):** wczytuje plik, oblicza dla każdego budynku, które okna ma zbadać i wycina odpowiedni fragment pliku **powiększony o zakładkę (`Overlap / Halo`)**, po czym rozsyła wycinki przez `MPI_Send`.
-* **Procesy robocze (`Rank 1..P-1` – Fabryki terenowe):** odbierają swój wycinek pliku (`MPI_Recv`), przeliczają swoje okna (w trybie naiwnym lub przyrostowym!) i zachowują **globalną numerację pozycji w pliku**, tak jakby widziały cały plik od początku.
-* **Zbiórka w centrali:** na koniec za pomocą zbiorczej operacji `MPI_Gatherv` wszystkie policzone wartości entropii spływają w ułamku milisekundy z powrotem do Dyrektora, który składa z nich kompletny raport i wykrywa granice segmentów.
+* **Proces główny (`Rank 0` – Dyrektor):** wczytuje plik, rozsyła jego rozmiar (`MPI_Bcast`), oblicza dla każdego budynku przedział okien i wycina odpowiedni fragment pliku **powiększony o zakładkę (`Halo` o szerokości `W - S` bajtów)**, po czym rozsyła wycinki nieblokująco przez `MPI_Isend` + `MPI_Waitall`.
+* **Procesy robocze (`Rank 1..P-1` – Fabryki terenowe):** odbierają swój wycinek pliku (`MPI_Recv`) i przeliczają swoje okna w funkcji `compute_mode` (w trybie naiwnym lub przyrostowym!).
+* **Zbiórka w centrali:** na koniec za pomocą zbiorczej operacji `MPI_Gatherv` z tablicą przesunięć `offsets` wszystkie policzone wartości entropii spływają w ułamku milisekundy z powrotem do Dyrektora, który składa z nich kompletny raport z zachowaniem globalnych pozycji bajtowych i wykrywa granice segmentów.
 
 ---
 
-### 4.6. `src/cuda_entropy.cu` (program `entropy_cuda` / `entropy_cuda.cu`) – Kod dla „mrówek” na karcie graficznej
+### 4.6. `src/cuda_entropy.cu` (program `entropy_cuda`) – Kod dla „mrówek” na karcie graficznej
 
 Zauważ nietypowe rozszerzenie tego pliku: nie `.cpp`, lecz **`.cu`**.
 * Pliki **`.cu`** to specjalny dialekt języka C++ stworzony przez firmę NVIDIA (**CUDA C++**). Zwykły kompilator procesora nie potrafi go przeczytać – potrzebny jest specjalny kompilator **`nvcc`**, który rozdziela ten plik na dwie części:
   1. Część dla **Gospodarza (`Host` – procesor CPU)**, która przygotowuje dane i wysyła je na kartę graficzną (`cudaMemcpyHostToDevice`).
-  2. Część dla **Urządzenia (`Device` – karta graficzna GPU)**, oznaczoną słowem kluczowym `__global__`, czyli instrukcję dla tysięcy mrówek na karcie graficznej (`entropy_kernel`).
-* Wewnątrz `src/cuda_entropy.cu` znajduje się nasz czterostopniowy algorytm mrówek korzystający z ultraszybkiej pamięci współdzielonej `__shared__`, atomowego wrzucania do koszyków `atomicAdd` oraz drzewiastej redukcji wyników. Ponadto plik ten używa specjalnych stoperów sprzętowych karty graficznej (`cudaEvent_t`), żeby z dokładnością do mikrosekund oddzielić **czas jazdy danych ciężarówką przez kabel PCIe** od **czasu faktycznej pracy mrówek na karcie**!
+  2. Część dla **Urządzenia (`Device` – karta graficzna GPU)**, oznaczoną słowem kluczowym `__global__`, czyli instrukcje dla tysięcy mrówek na karcie graficznej (`histogram_entropy_kernel`, `incremental_entropy_kernel` oraz `boundary_flags_kernel`).
+* Wewnątrz `src/cuda_entropy.cu` znajduje się nasz czterostopniowy algorytm mrówek korzystający z ultraszybkiej pamięci współdzielonej `__shared__`, atomowego wrzucania do koszyków `atomicAdd` / `atomicSub` oraz drzewiastej redukcji wyników (`block_entropy`). Ponadto plik ten używa specjalnych stoperów sprzętowych karty graficznej (`cudaEvent_t`), żeby z dokładnością do mikrosekund oddzielić **czas jazdy danych ciężarówką przez kabel PCIe** od **czasu faktycznej pracy mrówek na karcie**!
 
 ---
 
@@ -370,7 +369,7 @@ Zauważ nietypowe rozszerzenie tego pliku: nie `.cpp`, lecz **`.cu`**.
 
 Żadna poważna fabryka nie wypuszcza produktu bez kontroli jakości i bez działu analiz:
 * **`tests/` (`verify_correctness.py`, `verify_mpi.py`, `verify_cuda.py`, `check_cuda_model.py`):**
-  Automatyczni inspektorzy jakości. Uruchamiają wszystkie 4 programy na podchwytliwych przypadkach brzegowych (plik pusty, plik krótszy niż okno, plik z samych zer, plik losowy, różne wielkości okna i kroku w trybie naiwnym oraz przyrostowym) i sprawdzają, czy wyniki zgadzają się z Mistrzem Wzorca co do jednej miliardowej części bita ($\varepsilon = 10^{-9}$)!
+  Automatyczni inspektorzy jakości. Uruchamiają wszystkie 4 programy na podchwytliwych przypadkach brzegowych (plik pusty, plik krótszy niż okno, plik z samych zer, plik losowy, różne wielkości okna i kroku w trybie naiwnym oraz przyrostowym) i sprawdzają, czy wyniki zgadzają się z Mistrzem Wzorca z rygorystyczną tolerancją $\varepsilon = 10^{-6}$ (w praktyce błąd na CPU wynosi `0`, a na GPU poniżej $3{,}55 \times 10^{-15}$)!
 * **`scripts/` (`generate_datasets.py`, `benchmark_runner.py`, `benchmark_cuda.py`, `plot_results.py`, `plot_entropy.py`):**
   Nasz dział laboratoryjny w języku Python. Generuje kontrolowane pliki testowe z dokładnie znanymi granicami segmentów, uruchamia wielokrotne pomiary (z rozgrzewką procesora/karty i wyliczaniem mediany) oraz rysuje wszystkie wykresy i wizualizacje.
 
@@ -447,12 +446,12 @@ Zestawmy ze sobą wszystkie nasze podejścia w jednej, czytelnej tabeli wnioskó
 
 ### Powiązanie analogii z konkretnymi miejscami w kodzie źródłowym:
 1. **Wzorzec Shannona i tryb przyrostowy (`Incremental Histogram Update`):**
-   * Plik `common/compute.cpp` (funkcje `compute_entropy_reference` oraz `compute_entropy_incremental`, linie `19–96`): zaimplementowano tu automatyczny przełącznik `if (step >= window) return compute_entropy_reference(...)` oraz pętlę aktualizującą 256-elementową tablicę `std::array<uint32_t, 256> counts` poprzez odjęcie `step` bajtów opuszczających lewą krawędź okna (`counts[data[prev_offset + i]]--`) i dodanie `step` bajtów wchodzących z prawej krawędzi (`counts[data[curr_offset + i]]++`).
+   * Plik `common/compute.cpp` (funkcje `shannon_entropy`, `compute_naive`, `compute_incremental` oraz `compute_mode`, linie `5–52`): zaimplementowano tu warunek `if (step < window)` oraz pętlę aktualizującą 256-elementową tablicę `Histogram` (`std::array<uint32_t, 256>`) poprzez odjęcie `step` bajtów opuszczających lewą krawędź okna (`--histogram[bytes[old_start + j]]`) i dodanie `step` bajtów wchodzących z prawej krawędzi (`++histogram[bytes[old_start + window + j]]`).
 2. **Eliminacja *False Sharing* i zrównoleglenie trybu przyrostowego w OpenMP:**
-   * Plik `src/openmp.cpp` (funkcje `compute_entropy_openmp` oraz `compute_entropy_openmp_incremental`, linie `14–91`): w bloku `#pragma omp parallel` każdy wątek alokuje na własnym stosie prywatny histogram `std::array<uint32_t, 256> counts{}`. W wariancie przyrostowym zastosowano `#pragma omp for schedule(static)`, dzięki czemu każdy wątek inicjalizuje pełny histogram tylko dla pierwszego okna swojego ciągłego podprzedziału (`first_window_in_chunk = true`), a pozostałe okna wylicza w czasie $O(S)$.
+   * Plik `src/openmp.cpp` (linie `28–58`): w bloku `#pragma omp parallel` każdy wątek alokuje na własnym stosie prywatny histogram `c05::Histogram histogram{}`. W wariancie `naive` zastosowano `#pragma omp for schedule(static)`, natomiast w wariancie `incremental` zbiór okien dzielony jest na spójne pasma (`first = base * thread + std::min(thread, extra)`), dzięki czemu każdy wątek inicjalizuje pełny histogram tylko dla pierwszego okna swojego ciągłego podprzedziału, a pozostałe okna wylicza w czasie $\mathcal{O}(S)$.
 3. **Podział domenowy z zakładką (*Halo / Overlap*) w MPI:**
-   * Plik `src/mpi.cpp` (linie `115–190`): proces `rank == 0` wylicza dla każdego procesu przedział okien `[w_start, w_end)`, a następnie wyznacza długość bufora bajtowego równą `(r_windows - 1) * config.step_size + config.window_size`. Gwarantuje to dołączenie zakładki o rozmiarze `window_size - 1` bajtów na każdej granicy podziału bez duplikowania okien i z zachowaniem globalnych indeksów `global_idx = my_win_start + i`.
+   * Plik `src/mpi.cpp` (linie `54–95`): procesy wyliczają dla każdej rangi `r` przedział okien `offsets[r] = first`, `counts[r] = count`, a następnie wyznaczają długość bufora bajtowego równą `(count - 1) * options.step + options.window`. Gwarantuje to dołączenie zakładki o rozmiarze `window - step` bajtów na każdej granicy podziału bez duplikowania okien i z zachowaniem globalnych indeksów podczas scalania `MPI_Gatherv`.
 4. **Pamięć współdzielona i badanie kolizji atomowych w CUDA:**
-   * Plik `src/cuda_entropy.cu` (jądro `entropy_kernel`, linie `24–66`): każdy blok wątków rezerwuje pamięć współdzieloną `__shared__ unsigned int local_hist[256]` oraz bufor redukcji `__shared__ double shared_entropy[256]`. Zliczanie odbywa się instrukcją `atomicAdd(&local_hist[data[window_start + i]], 1u)`, natomiast suma $-p_i \log_2(p_i)$ liczona jest w redukcji drzewiastej w pamięci współdzielonej (`for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1)`).
+   * Plik `src/cuda_entropy.cu` (funkcja `block_entropy` oraz kernele `histogram_entropy_kernel`, `incremental_entropy_kernel` i `boundary_flags_kernel`, linie `84–183`): każdy blok wątków rezerwuje pamięć współdzieloną `__shared__ unsigned int s_hist[256]` oraz bufor redukcji `__shared__ double s_terms[256]`. Zliczanie odbywa się instrukcjami `atomicAdd` / `atomicSub`, natomiast suma $-p_i \log_2(p_i)$ liczona jest w redukcji drzewiastej w pamięci współdzielonej (`for (unsigned int stride = 128; stride > 0; stride >>= 1)`).
 5. **Weryfikacja i surowe dane eksperymentalne:**
-   * Wszystkie przytoczone w przewodniku liczby pochodzą bezpośrednio z przeprowadzonych pomiarów zapisanych w plikach `results/raw_results.csv`, `results/cuda_benchmark.json`, `results/atomic_contention_ksymbol.csv`, `results/gpu_datasize_scaling.csv` oraz `results/boundary_localization_summary.csv`, a wszystkie 4 testy automatyczne CTest (`check_cuda_host_model`, `verify_cpu_correctness`, `verify_mpi_correctness`, `verify_cuda_correctness`) zakończyły się wynikiem **100% PASSED**.
+   * Wszystkie przytoczone w projekcie liczby pochodzą bezpośrednio z przeprowadzonych pomiarów zapisanych w plikach `results/raw_results.csv`, `results/cuda_benchmark.json`, `results/atomic_contention_ksymbol.csv`, `results/gpu_datasize_scaling.csv` oraz `results/boundary_localization_summary.csv`, a wszystkie 4 testy automatyczne CTest (`host_model_correctness`, `reference_and_openmp_correctness`, `mpi_correctness`, `cuda_correctness`) zakończyły się wynikiem **100% PASSED**.
