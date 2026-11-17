@@ -1,4 +1,5 @@
 #include "common/io.hpp"
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <fstream>
@@ -47,8 +48,11 @@ Options parse_options(int argc, char** argv) {
             if (n > static_cast<std::size_t>(std::numeric_limits<int>::max()))
                 throw std::invalid_argument("--threads exceeds INT_MAX");
             o.threads = static_cast<int>(n);
-        } else if (key == "--mode") o.mode = value;
-        else {
+        } else if (key == "--mode") {
+            if (value == "naive") o.mode = Mode::Naive;
+            else if (value == "incremental") o.mode = Mode::Incremental;
+            else throw std::invalid_argument("--mode must be naive or incremental");
+        } else {
             const auto parsed = std::from_chars(value.data(), value.data() + value.size(), o.threshold);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
                 !std::isfinite(o.threshold) || o.threshold < 0)
@@ -62,8 +66,6 @@ Options parse_options(int argc, char** argv) {
         throw std::invalid_argument("Paths must not be empty");
     if (o.window > std::numeric_limits<std::uint32_t>::max())
         throw std::invalid_argument("--window exceeds uint32_t histogram capacity");
-    if (o.mode != "naive" && o.mode != "incremental")
-        throw std::invalid_argument("--mode must be naive or incremental");
     if (same_path(o.input, o.output))
         throw std::invalid_argument("Input and output refer to the same file");
     if (!o.events.empty() && (same_path(o.events, o.input) || same_path(o.events, o.output)))
@@ -117,13 +119,16 @@ WindowLayout window_layout(std::size_t bytes, std::size_t window, std::size_t st
     const auto gaps = step > window ? (count - 1) * (step - window) : 0;
     return {count, bytes - covered_end, gaps};
 }
-std::vector<Boundary> detect_boundaries(std::span<const double> entropy,
-                                      std::size_t step, double threshold) {
+WindowRange block_range(std::size_t count, std::size_t parts, std::size_t index) {
+    if (parts == 0 || index >= parts) throw std::invalid_argument("Invalid block partition");
+    const auto base = count / parts, extra = count % parts;
+    return {base * index + std::min(index, extra), base + (index < extra ? 1 : 0)};
+}
+std::vector<Boundary> detect_boundaries(std::span<const double> entropy, double threshold) {
     std::vector<Boundary> result;
     for (std::size_t i = 1; i < entropy.size(); ++i) {
         const double delta = entropy[i] - entropy[i - 1];
-        if (std::abs(delta) >= threshold)
-            result.push_back({i, i * step, entropy[i - 1], entropy[i], delta});
+        if (std::abs(delta) >= threshold) result.push_back({i, delta});
     }
     return result;
 }
@@ -177,27 +182,31 @@ void write_events_csv(const std::filesystem::path& path, std::span<const Boundar
     out.close();
     if (!out) throw std::runtime_error("Events close failed");
 }
-std::size_t write_events_if_requested(const Options& options, std::span<const Boundary> boundaries,
-                                      std::span<const double> entropy) {
-    const auto events = merge_boundaries(boundaries, entropy, options.window, options.step);
-    if (!options.events.empty()) write_events_csv(options.events, events);
-    return events.size();
-}
 void write_csv(const std::filesystem::path& path, std::span<const double> entropy,
-               std::size_t step, double threshold) {
+               std::size_t step, std::span<const Boundary> boundaries) {
     std::ofstream out(path, std::ios::trunc);
     if (!out) throw std::runtime_error("Cannot open output: " + path.string());
     out.imbue(std::locale::classic());
     out << "offset,entropy,delta,is_boundary\n" << std::setprecision(17);
+    auto next = boundaries.begin(); // boundaries are sorted by window index
     for (std::size_t i = 0; i < entropy.size(); ++i) {
         const double delta = i == 0 ? 0 : entropy[i] - entropy[i - 1];
-        out << i * step << ',' << entropy[i] << ',' << delta << ','
-            << (i != 0 && std::abs(delta) >= threshold ? 1 : 0) << '\n';
+        const bool flagged = next != boundaries.end() && next->window_index == i;
+        if (flagged) ++next;
+        out << i * step << ',' << entropy[i] << ',' << delta << ',' << (flagged ? 1 : 0) << '\n';
     }
+    if (next != boundaries.end()) throw std::logic_error("Boundary outside the window range");
     out.flush();
     if (!out) throw std::runtime_error("Output write failed");
     out.close();
     if (!out) throw std::runtime_error("Output close failed");
+}
+std::size_t write_outputs(const Options& options, std::span<const double> entropy,
+                          std::span<const Boundary> boundaries) {
+    write_csv(options.output, entropy, options.step, boundaries);
+    const auto events = merge_boundaries(boundaries, entropy, options.window, options.step);
+    if (!options.events.empty()) write_events_csv(options.events, events);
+    return events.size();
 }
 void report_layout(std::size_t bytes, const Options& options) {
     const auto layout = window_layout(bytes, options.window, options.step);
@@ -208,7 +217,7 @@ void report_layout(std::size_t bytes, const Options& options) {
 void report_timing(std::string_view backend, const Options& options,
                    std::size_t windows, std::size_t boundaries, std::size_t events,
                    double core_seconds, double total_seconds) {
-    std::cerr << std::setprecision(9) << "backend=" << backend << " mode=" << options.mode
+    std::cerr << std::setprecision(9) << "backend=" << backend << " mode=" << mode_name(options.mode)
               << " windows=" << windows << " boundaries=" << boundaries << " events=" << events
               << " T_core_s=" << core_seconds << " T_total_s=" << total_seconds << '\n';
 }

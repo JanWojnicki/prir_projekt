@@ -10,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #include <mpi.h>
 namespace {
@@ -52,12 +53,11 @@ int main(int argc, char** argv) {
         std::vector<int> byte_counts(processes), byte_offsets(processes);
         std::vector<int> counts(processes), offsets(processes);
         for (std::size_t r = 0; r < processes; ++r) {
-            const auto first = (layout.count / processes) * r + std::min(r, layout.count % processes);
-            const auto count = layout.count / processes + (r < layout.count % processes ? 1 : 0);
-            counts[r] = mpi_count(count);
-            offsets[r] = mpi_count(first);
-            byte_counts[r] = mpi_count(count == 0 ? 0 : (count - 1) * options.step + options.window);
-            byte_offsets[r] = count == 0 ? 0 : mpi_count(first * options.step);
+            const auto range = c05::block_range(layout.count, processes, r);
+            counts[r] = mpi_count(range.count);
+            offsets[r] = mpi_count(range.first);
+            byte_counts[r] = mpi_count(range.count == 0 ? 0 : (range.count - 1) * options.step + options.window);
+            byte_offsets[r] = range.count == 0 ? 0 : mpi_count(range.first * options.step);
         }
         const auto r = static_cast<std::size_t>(rank);
         std::vector<std::uint8_t> local(static_cast<std::size_t>(byte_counts[r]));
@@ -81,8 +81,8 @@ int main(int argc, char** argv) {
                            MPI_COMM_WORLD, MPI_STATUS_IGNORE));
         }
         std::vector<double> local_entropy(static_cast<std::size_t>(counts[r]));
-        c05::Results results;
-        if (rank == 0) results.entropy.resize(layout.count);
+        std::vector<double> entropy; // gathered on rank 0 only
+        if (rank == 0) entropy.resize(layout.count);
         check(MPI_Barrier(MPI_COMM_WORLD));
         const double core_start = MPI_Wtime();
         c05::compute_mode(options.mode, local, options.window, options.step, local_entropy);
@@ -90,14 +90,14 @@ int main(int argc, char** argv) {
         std::array<double, 2> core_minmax{-local_core, local_core}, reduced{};
         check(MPI_Reduce(core_minmax.data(), reduced.data(), 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
         const double gather_start = MPI_Wtime();
-        check(MPI_Gatherv(local_entropy.data(), counts[r], MPI_DOUBLE, results.entropy.data(),
+        check(MPI_Gatherv(local_entropy.data(), counts[r], MPI_DOUBLE, entropy.data(),
                          counts.data(), offsets.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD));
         const double gather_end = MPI_Wtime();
-        std::size_t events = 0;
+        std::size_t boundaries = 0, events = 0;
         if (rank == 0) {
-            results.boundaries = c05::detect_boundaries(results.entropy, options.step, options.threshold);
-            c05::write_csv(options.output, results.entropy, options.step, options.threshold);
-            events = c05::write_events_if_requested(options, results.boundaries, results.entropy);
+            const auto found = c05::detect_boundaries(entropy, options.threshold);
+            boundaries = found.size();
+            events = c05::write_outputs(options, entropy, found);
         }
         check(MPI_Barrier(MPI_COMM_WORLD));
         const double local_total = MPI_Wtime() - total_start;
@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
         check(MPI_Reduce(&local_total, &total, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
         if (rank == 0) {
             c05::report_layout(static_cast<std::size_t>(size), options);
-            c05::report_timing("mpi", options, layout.count, results.boundaries.size(), events,
+            c05::report_timing("mpi", options, layout.count, boundaries, events,
                                reduced[1], total);
             std::cerr << "mpi_ranks=" << ranks << " T_read_s=" << read_end - total_start
                       << " T_distribute_s=" << core_start - distribute_start

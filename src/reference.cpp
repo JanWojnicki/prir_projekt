@@ -4,6 +4,7 @@
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 int main(int argc, char** argv) {
     try {
         const auto options = c05::parse_options(argc, argv);
@@ -13,17 +14,15 @@ int main(int argc, char** argv) {
         const auto total_start = Clock::now();
         const auto bytes = c05::read_binary(options.input);
         const auto layout = c05::window_layout(bytes.size(), options.window, options.step);
-        c05::Results results;
-        results.entropy.resize(layout.count);
+        std::vector<double> entropy(layout.count);
         const auto core_start = Clock::now();
-        c05::compute_mode(options.mode, bytes, options.window, options.step, results.entropy);
+        c05::compute_mode(options.mode, bytes, options.window, options.step, entropy);
         const auto core_end = Clock::now();
-        results.boundaries = c05::detect_boundaries(results.entropy, options.step, options.threshold);
-        c05::write_csv(options.output, results.entropy, options.step, options.threshold);
-        const auto events = c05::write_events_if_requested(options, results.boundaries, results.entropy);
+        const auto boundaries = c05::detect_boundaries(entropy, options.threshold);
+        const auto events = c05::write_outputs(options, entropy, boundaries);
         const auto total_end = Clock::now();
         c05::report_layout(bytes.size(), options);
-        c05::report_timing("reference", options, layout.count, results.boundaries.size(), events,
+        c05::report_timing("reference", options, layout.count, boundaries.size(), events,
             std::chrono::duration<double>(core_end - core_start).count(),
             std::chrono::duration<double>(total_end - total_start).count());
         return 0;

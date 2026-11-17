@@ -3,14 +3,17 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 namespace c05 {
+// Histogram algorithm selected with --mode.
+enum class Mode { Naive, Incremental };
+constexpr std::string_view mode_name(Mode mode) {
+    return mode == Mode::Naive ? "naive" : "incremental";
+}
 // One window whose signed entropy delta to the previous window satisfies |delta| >= T.
 struct Boundary {
     std::size_t window_index;
-    std::size_t byte_offset;
-    double entropy_prev;
-    double entropy_curr;
     double delta;
 };
 // A maximal run of consecutive flagged windows, reported as one entropy change.
@@ -33,7 +36,7 @@ struct Options {
     std::size_t step = 0;
     double threshold = 0;
     int threads = 0;
-    std::string mode = "naive";
+    Mode mode = Mode::Naive;
     bool help = false;
 };
 struct WindowLayout {
@@ -41,8 +44,9 @@ struct WindowLayout {
     std::size_t trailing_bytes;
     std::size_t uncovered_gap_bytes;
 };
-struct Results {
-    std::vector<double> entropy;
-    std::vector<Boundary> boundaries;
+// Contiguous range of window indices [first, first + count) owned by one thread or rank.
+struct WindowRange {
+    std::size_t first;
+    std::size_t count;
 };
 }

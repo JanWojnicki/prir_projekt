@@ -108,8 +108,9 @@ def oracle(data, window, step, threshold):
     return result
 
 
-def run(exe, data_path, output, window, step, threshold, mode, extra=()):
-    command = [str(exe), '--input', str(data_path), '--window', str(window),
+def run(exe, data_path, output, window, step, threshold, mode, extra=(), launcher=()):
+    """Run one backend (optionally behind a launcher such as mpiexec); return (rows, stderr)."""
+    command = [*launcher, str(exe), '--input', str(data_path), '--window', str(window),
                '--step', str(step), '--threshold', str(threshold), '--output', str(output),
                '--mode', mode, *extra]
     completed = subprocess.run(command, capture_output=True, text=True, timeout=120)

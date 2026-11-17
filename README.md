@@ -13,7 +13,7 @@ Pełne sprawozdanie z analizą algorytmiczną, metodologią, konfiguracją sprz�
 
 ---
 
-## 1. Strukturze repozytorium i udział kodu własnego
+## 1. Struktura repozytorium i udział kodu własnego
 
 Rdzeń obliczeniowy (wyznaczanie 256-koszykowych histogramów rozkładu bajtów, obliczanie entropii Shannona w bitach na bajt z pominięciem składników o zerowym prawdopodobieństwie, przyrostowa aktualizacja histogramu, detekcja granic $|\Delta H| \ge T$ oraz scalanie sąsiednich okien przekraczających próg w pojedyncze zdarzenia zmiany) został **w całości zaimplementowany samodzielnie** w C++20 i CUDA C++. Biblioteki zewnętrzne służą wyłącznie do komunikacji i zrównoleglenia (`OpenMP`, `MPI`, `CUDA Runtime API`), obsługi standardowego wejścia/wyjścia (`STL`) oraz generowania wykresów (`matplotlib`, `seaborn`, `pandas`, `numpy`).
 
@@ -37,7 +37,6 @@ Rdzeń obliczeniowy (wyznaczanie 256-koszykowych histogramów rozkładu bajtów,
 │   ├── generate_datasets.py     # Deterministyczny generator zbiorów testowych i ground-truth JSON
 │   ├── benchmark_runner.py      # Główny skrypt pomiarowy (rozgrzewka + >=5 powtórzeń + studia dodatkowe)
 │   ├── benchmark_cuda.py        # Pomocniczy skrypt szybkich pomiarów kernela CUDA (JSON)
-│   ├── benchmark_all.sh         # Skrypt powłoki uruchamiający pełny potok pomiarowy
 │   ├── plot_results.py          # Generator wykresów publikacyjnych (.png 300 DPI + wektorowe .pdf)
 │   └── plot_entropy.py          # Samodzielny skrypt CLI rysujący wykres entropii względem pozycji z CSV
 ├── tests/
@@ -125,7 +124,7 @@ Zestaw obejmuje 4 grupy testów:
 1. `host_model_correctness` ([`tests/check_cuda_model.py`](tests/check_cuda_model.py)) – 500 losowych modeli redukcji drzewiastej w pamięci współdzielonej dla bloków `64..1024`, pełne pokrycie pętli `grid-stride` oraz model arytmetyki modularnej `uint32_t` przy przeplocie `atomicSub`/`atomicAdd` w trybie przyrostowym.
 2. `reference_and_openmp_correctness` ([`tests/verify_correctness.py`](tests/verify_correctness.py)) – 144 kombinacje przypadków brzegowych (pusty plik, $N < W$, $W = 1$, $S < W$, $S = W$, $S > W$, progi $0.0, 0.1, 8.0$) porównujące `Ref-Naive`, `Ref-Incremental`, `OMP-Naive` i `OMP-Incremental` (dla 1, 2 i 4 wątków) z niezależną wyrocznią w Pythonie, test progu włącznego $|\Delta H| = T$, weryfikację pliku `--events` oraz odrzucanie błędnych argumentów CLI.
 3. `mpi_correctness` ([`tests/verify_mpi.py`](tests/verify_mpi.py)) – 128 konfiguracji porównujących `MPI-Naive` i `MPI-Incremental` dla liczby procesów $p \in \{1, 2, 4, 7\}$ (w tym przypadek $p > K$, gdzie część procesów otrzymuje 0 okien) z implementacją referencyjną.
-4. `cuda_correctness` ([`tests/verify_cuda.py`](tests/verify_cuda.py)) – 112 konfiguracji na fizycznym GPU porównujących `CUDA-Naive` i `CUDA-Incremental` dla wszystkich rozmiarów bloku (`64, 128, 256, 512, 1024`) z referencją CPU при rygorystycznej tolerancji $\varepsilon = 10^{-6}$ (rzeczywisty maksymalny błąd na GPU wynosi $3{,}55 \times 10^{-15}$).
+4. `cuda_correctness` ([`tests/verify_cuda.py`](tests/verify_cuda.py)) – 112 konfiguracji na fizycznym GPU porównujących `CUDA-Naive` i `CUDA-Incremental` dla wszystkich rozmiarów bloku (`64, 128, 256, 512, 1024`) z referencją CPU przy rygorystycznej tolerancji $\varepsilon = 10^{-6}$ (rzeczywisty maksymalny błąd na GPU w tych testach wynosi $3{,}55 \times 10^{-15}$; na pełnym pliku `mixed_segmented.bin` (150 MB, $W = 65536$, $S = 16384$) maksymalny błąd wynosi $1{,}69 \times 10^{-14}$ – zob. `results/backend_numerical_error.csv`).
 
 ---
 
