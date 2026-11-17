@@ -8,6 +8,7 @@
 build/
 build-*/
 cmake-build-*/
+other/
 out/
 CMakeFiles/
 CMakeCache.txt
