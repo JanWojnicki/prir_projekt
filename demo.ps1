@@ -55,18 +55,19 @@ if ($Mode -eq "shell") {
 
 if ($Mode -eq "test") {
     Write-Host "[*] Uruchamianie kompilacji i testow poprawnosci CTest..." -ForegroundColor Green
-    docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-env:latest bash -c "
+    $testScript = @"
         set -e
         cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
         cmake --build build -j
         ctest --test-dir build --output-on-failure -V
-    "
+"@ -replace "`r", ""
+    docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-env:latest bash -c $testScript
     exit 0
 }
 
 if ($Mode -eq "reproduce") {
     Write-Host "[*] Pelne odtworzenie wszystkich eksperymentow i wykresow ze sprawozdania..." -ForegroundColor Green
-    docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-env:latest bash -c "
+    $reproduceScript = @"
         set -e
         cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=75 -DC05_REQUIRE_ALL=ON
         cmake --build build --parallel
@@ -75,13 +76,14 @@ if ($Mode -eq "reproduce") {
         python3 scripts/benchmark_cuda.py --exe build/entropy_cuda --datasets datasets --output results/cuda_benchmark.json
         python3 scripts/plot_results.py --csv results/raw_results.csv --output-dir results/plots
         python3 scripts/plot_entropy.py --csv results/segmentation.csv --events results/segmentation_events.csv --ground-truth results/ground_truth_boundaries.json --output results/plots/entropy_profile_cli.png
-    "
+"@ -replace "`r", ""
+    docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-env:latest bash -c $reproduceScript
     Write-Host "[OK] Wszystkie wyniki CSV/JSON oraz wykresy PNG/PDF zostaly odtworzone w katalogu results/!" -ForegroundColor Green
     exit 0
 }
 
 # Domyslny tryb: szybkie pokazowe uruchomienie na obronie (demo)
-docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-env:latest bash -c "
+$demoScript = @"
     set -e
     mkdir -p results/logs
     echo ''
@@ -132,7 +134,8 @@ docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-
     echo '>>> KROK 6: Generowanie wykresu profilu entropii dla 5-segmentowego pliku multi_segmented.bin...'
     ./build/entropy_omp --input datasets/multi_segmented.bin --window 4096 --step 1024 --threshold 0.8 --threads 12 --mode incremental --output results/logs/segmentation_multi.csv --events results/logs/segmentation_multi_events.csv
     python3 scripts/plot_entropy.py --csv results/logs/segmentation_multi.csv --events results/logs/segmentation_multi_events.csv --ground-truth datasets/ground_truth_boundaries.json --file-key multi_segmented.bin --output results/logs/demo_entropy_profile.png
-"
+"@ -replace "`r", ""
+docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-env:latest bash -c $demoScript
 
 Write-Host ""
 Write-Host "[OK] Pokaz zakonczony pomyslnie! Wykres zapisano w: results/logs/demo_entropy_profile.png" -ForegroundColor Green
