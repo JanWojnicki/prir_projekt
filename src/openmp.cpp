@@ -2,11 +2,11 @@
 // 256-bin histogram, so no shared counter is touched per byte and no atomics are needed.
 #include "common/compute.hpp"
 #include "common/io.hpp"
-#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 #include <omp.h>
 int main(int argc, char** argv) {
     try {
@@ -19,24 +19,21 @@ int main(int argc, char** argv) {
         const auto layout = c05::window_layout(bytes.size(), options.window, options.step);
         if (layout.count > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()))
             throw std::runtime_error("Too many windows for OpenMP loop");
-        c05::Results results;
-        results.entropy.resize(layout.count);
+        std::vector<double> entropy(layout.count);
         const std::span<const std::uint8_t> data(bytes);
-        const std::span<double> entropy(results.entropy);
+        const std::span<double> output(entropy);
         int used_threads = 1;
         const auto core_start = Clock::now();
-        if (options.mode == "naive") {
+        if (options.mode == c05::Mode::Naive) {
             #pragma omp parallel
             {
                 #pragma omp single
                 used_threads = omp_get_num_threads();
-                c05::Histogram histogram{};
+                // window_entropy keeps its histogram on the calling thread's stack.
                 #pragma omp for schedule(static)
                 for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(layout.count); ++i) {
-                    histogram.fill(0);
-                    const auto offset = static_cast<std::size_t>(i) * options.step;
-                    for (std::size_t j = 0; j < options.window; ++j) ++histogram[data[offset + j]];
-                    entropy[static_cast<std::size_t>(i)] = c05::shannon_entropy(histogram, options.window);
+                    const auto index = static_cast<std::size_t>(i);
+                    output[index] = c05::window_entropy(data.subspan(index * options.step, options.window));
                 }
             }
         } else {
@@ -45,24 +42,21 @@ int main(int argc, char** argv) {
             #pragma omp parallel
             {
                 const auto threads = static_cast<std::size_t>(omp_get_num_threads());
-                const auto thread = static_cast<std::size_t>(omp_get_thread_num());
                 #pragma omp single
                 used_threads = static_cast<int>(threads);
-                const auto base = layout.count / threads, extra = layout.count % threads;
-                const auto first = base * thread + std::min(thread, extra);
-                const auto count = base + (thread < extra ? 1 : 0);
-                if (count)
-                    c05::compute_incremental(data.subspan(first * options.step), options.window,
-                                             options.step, entropy.subspan(first, count));
+                const auto range = c05::block_range(layout.count, threads,
+                                                    static_cast<std::size_t>(omp_get_thread_num()));
+                if (range.count)
+                    c05::compute_incremental(data.subspan(range.first * options.step), options.window,
+                                             options.step, output.subspan(range.first, range.count));
             }
         }
         const auto core_end = Clock::now();
-        results.boundaries = c05::detect_boundaries(results.entropy, options.step, options.threshold);
-        c05::write_csv(options.output, results.entropy, options.step, options.threshold);
-        const auto events = c05::write_events_if_requested(options, results.boundaries, results.entropy);
+        const auto boundaries = c05::detect_boundaries(entropy, options.threshold);
+        const auto events = c05::write_outputs(options, entropy, boundaries);
         const auto total_end = Clock::now();
         c05::report_layout(bytes.size(), options);
-        c05::report_timing("openmp", options, layout.count, results.boundaries.size(), events,
+        c05::report_timing("openmp", options, layout.count, boundaries.size(), events,
             std::chrono::duration<double>(core_end - core_start).count(),
             std::chrono::duration<double>(total_end - total_start).count());
         std::cerr << "omp_threads=" << used_threads << '\n';

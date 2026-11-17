@@ -12,10 +12,9 @@ double window_entropy(std::span<const std::uint8_t> bytes);
 void compute_naive(std::span<const std::uint8_t> bytes, std::size_t window,
                    std::size_t step, std::span<double> output);
 // Sliding histogram: for S < W the update removes S leaving bytes and adds S entering
-// bytes; for S >= W windows do not overlap and the histogram is rebuilt.
+// bytes; for S >= W windows do not overlap, so this is exactly compute_naive.
 void compute_incremental(std::span<const std::uint8_t> bytes, std::size_t window,
                          std::size_t step, std::span<double> output);
-// Dispatches on Options::mode ("naive" or "incremental").
-void compute_mode(const std::string& mode, std::span<const std::uint8_t> bytes,
+void compute_mode(Mode mode, std::span<const std::uint8_t> bytes,
                   std::size_t window, std::size_t step, std::span<double> output);
 }

@@ -8,11 +8,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <locale>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -125,10 +123,11 @@ __global__ void histogram_entropy_kernel(const std::uint8_t* data,
     }
 }
 
-// incremental: block b processes windows [b*per_block, min(count, (b+1)*per_block)).
-// Only the first window of a range is built from scratch. For S < W the next histogram
-// is obtained by removing the S leaving bytes and adding the S entering bytes. Counts
-// never underflow: every decremented byte is present in the current window.
+// incremental (launched only for S < W; disjoint windows use the naive kernel):
+// block b processes windows [b*per_block, min(count, (b+1)*per_block)). Only the first
+// window of a range is built from scratch; the next histogram is obtained by removing
+// the S leaving bytes and adding the S entering bytes. Counts never underflow: every
+// decremented byte is present in the current window.
 __global__ void incremental_entropy_kernel(const std::uint8_t* data,
     std::size_t window, std::size_t step, std::size_t count, std::size_t per_block,
     double* d_entropy) {
@@ -149,17 +148,9 @@ __global__ void incremental_entropy_kernel(const std::uint8_t* data,
         if (thread == 0) d_entropy[first] = h;
         for (std::size_t i = first + 1; i < last; ++i) {
             const std::size_t old_start = (i - 1) * step;
-            if (step < window) {
-                for (std::size_t j = thread; j < step; j += blockDim.x) {
-                    atomicSub(&s_hist[data[old_start + j]], 1U);
-                    atomicAdd(&s_hist[data[old_start + window + j]], 1U);
-                }
-            } else {
-                for (unsigned int bin = thread; bin < 256; bin += blockDim.x)
-                    s_hist[bin] = 0;
-                __syncthreads();
-                for (std::size_t j = thread; j < window; j += blockDim.x)
-                    atomicAdd(&s_hist[data[i * step + j]], 1U);
+            for (std::size_t j = thread; j < step; j += blockDim.x) {
+                atomicSub(&s_hist[data[old_start + j]], 1U);
+                atomicAdd(&s_hist[data[old_start + window + j]], 1U);
             }
             __syncthreads();
             h = block_entropy(s_hist, s_terms, window);
@@ -183,24 +174,6 @@ __global__ void boundary_flags_kernel(const double* d_entropy,
 }
 
 namespace {
-void write_gpu_csv(const std::filesystem::path& path,
-    const std::vector<double>& entropy, const std::vector<std::uint8_t>& flags,
-    std::size_t step) {
-    if (entropy.size() != flags.size()) throw std::logic_error("Result sizes differ");
-    std::ofstream output(path, std::ios::trunc);
-    if (!output) throw std::runtime_error("Cannot open output: " + path.string());
-    output.imbue(std::locale::classic());
-    output << "offset,entropy,delta,is_boundary\n" << std::setprecision(17);
-    for (std::size_t i = 0; i < entropy.size(); ++i) {
-        const double delta = i == 0 ? 0.0 : entropy[i] - entropy[i - 1];
-        output << i * step << ',' << entropy[i] << ',' << delta << ','
-               << static_cast<unsigned int>(flags[i]) << '\n';
-    }
-    output.flush();
-    if (!output) throw std::runtime_error("CSV write failed");
-    output.close();
-    if (!output) throw std::runtime_error("CSV close failed");
-}
 unsigned int grid_size(std::size_t desired, const cudaDeviceProp& device) {
     return static_cast<unsigned int>(std::min<std::size_t>(desired,
         static_cast<std::size_t>(device.maxGridSize[0])));
@@ -216,7 +189,8 @@ int main(int argc, char** argv) {
                          "one of 64,128,256,512,1024 (default 256).\n";
             return 0;
         }
-        const bool incremental = options.mode == "incremental";
+        // Sliding updates only help when windows overlap; for S >= W both modes are naive.
+        const bool sliding = options.mode == c05::Mode::Incremental && options.step < options.window;
         const int threads = options.threads == 0 ? 256 : options.threads;
         if (threads < 64 || threads > 1024 || (threads & (threads - 1)) != 0)
             throw std::invalid_argument("--threads must be 64,128,256,512 or 1024");
@@ -227,7 +201,6 @@ int main(int argc, char** argv) {
         const auto layout = c05::window_layout(bytes.size(), options.window, options.step);
         std::vector<double> entropy(layout.count);
         std::vector<std::uint8_t> flags(layout.count);
-        std::vector<c05::Boundary> boundaries;
         Measurement h2d, kernel, detection, d2h;
         double setup_seconds = 0, cleanup_seconds = 0;
         std::size_t grid_blocks = 0, windows_per_block = 1;
@@ -242,7 +215,7 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("Threads exceed device limit");
             if (device.maxGridSize[0] <= 0) throw std::runtime_error("Invalid CUDA grid limit");
             device_name = device.name;
-            if (incremental && options.step < options.window) {
+            if (sliding) {
                 // Balance sliding amortization against SM load balancing (cap at 64 windows/chunk).
                 int per_sm = 0;
                 CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm,
@@ -266,7 +239,7 @@ int main(int argc, char** argv) {
             });
             const auto blocks = static_cast<unsigned int>(grid_blocks);
             kernel = measure(eventStart, eventStop, [&] {
-                if (incremental)
+                if (sliding)
                     incremental_entropy_kernel<<<blocks, threads>>>(d_bytes.data(), options.window,
                         options.step, layout.count, windows_per_block, d_entropy.data());
                 else
@@ -294,19 +267,20 @@ int main(int argc, char** argv) {
             cleanup_seconds = std::chrono::duration<double>(Clock::now() - cleanup_start).count();
         }
         const auto post_start = Clock::now();
-        for (std::size_t i = 0; i < entropy.size(); ++i) {
+        for (std::size_t i = 0; i < entropy.size(); ++i)
             if (!std::isfinite(entropy[i]) || entropy[i] < -1e-6 || entropy[i] > 8.0 + 1e-6)
                 throw std::runtime_error("Invalid GPU entropy at window " + std::to_string(i));
-            const double delta = i == 0 ? 0.0 : entropy[i] - entropy[i - 1];
-            const auto expected = static_cast<std::uint8_t>(i != 0 && std::abs(delta) >= options.threshold);
-            if (flags[i] != expected)
-                throw std::runtime_error("GPU boundary flag differs from CPU check at window " + std::to_string(i));
-            if (flags[i]) boundaries.push_back({i, i * options.step, entropy[i - 1], entropy[i], delta});
-        }
+        // The GPU flags must agree with the shared CPU detection on the same entropy values.
+        const auto boundaries = c05::detect_boundaries(entropy, options.threshold);
+        std::vector<std::uint8_t> expected(entropy.size(), 0);
+        for (const auto& boundary : boundaries) expected[boundary.window_index] = 1;
+        const auto mismatch = std::mismatch(flags.begin(), flags.end(), expected.begin());
+        if (mismatch.first != flags.end())
+            throw std::runtime_error("GPU boundary flag differs from CPU check at window " +
+                                     std::to_string(mismatch.first - flags.begin()));
         const double post_seconds = std::chrono::duration<double>(Clock::now() - post_start).count();
         const auto write_start = Clock::now();
-        write_gpu_csv(options.output, entropy, flags, options.step);
-        const auto events = c05::write_events_if_requested(options, boundaries, entropy);
+        const auto events = c05::write_outputs(options, entropy, boundaries);
         const auto total_end = Clock::now();
         const double write_seconds = std::chrono::duration<double>(total_end - write_start).count();
         const double total_seconds = std::chrono::duration<double>(total_end - total_start).count();

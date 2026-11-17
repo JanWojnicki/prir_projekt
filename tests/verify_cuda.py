@@ -3,23 +3,15 @@
 import argparse
 from pathlib import Path
 import random
-import subprocess
 import tempfile
-from verify_correctness import compare, load_csv, load_events_csv, verify_events_against_rows
+from verify_correctness import compare, load_events_csv, run, verify_events_against_rows
 
 
-def run(exe, source, output, window, step, threshold, mode='naive', threads=None, events_out=None):
-    command = [str(exe), '--input', str(source), '--output', str(output),
-               '--window', str(window), '--step', str(step),
-               '--threshold', str(threshold), '--mode', mode]
-    if threads is not None:
-        command += ['--threads', str(threads)]
+def run_gpu(exe, source, output, window, step, threshold, mode, threads, events_out=None):
+    extra = ['--threads', str(threads)]
     if events_out is not None:
-        command += ['--events', str(events_out)]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    if result.returncode:
-        raise RuntimeError(f'{command}:\n{result.stderr}')
-    return load_csv(output)
+        extra += ['--events', str(events_out)]
+    return run(exe, source, output, window, step, threshold, mode, extra)[0]
 
 
 def main():
@@ -41,28 +33,28 @@ def main():
         for data in fixtures:
             source.write_bytes(data)
             for window, step in parameters:
-                expected = run(ref, source, root / 'ref.csv', window, step, 0.1)
+                expected, _ = run(ref, source, root / 'ref.csv', window, step, 0.1, 'naive')
                 for mode in ('naive', 'incremental'):
                     for threads in (64, 256):
-                        actual = run(gpu, source, root / 'gpu.csv', window, step,
-                                     0.1, mode, threads, events_out)
+                        actual = run_gpu(gpu, source, root / 'gpu.csv', window, step,
+                                         0.1, mode, threads, events_out)
                         maximum = max(maximum, compare(expected, actual))
                         verify_events_against_rows(actual, load_events_csv(events_out), window, step)
                         cases += 1
         # Test all valid block sizes (64, 128, 256, 512, 1024) and threshold=0.0 on mixed data.
         source.write_bytes(b'\x00' * 256 + bytes(range(256)) + rng.randbytes(1024))
-        expected0 = run(ref, source, root / 'ref0.csv', 64, 16, 0.0)
+        expected0, _ = run(ref, source, root / 'ref0.csv', 64, 16, 0.0, 'naive')
         for mode in ('naive', 'incremental'):
             for threads in (64, 128, 256, 512, 1024):
-                actual0 = run(gpu, source, root / 'gpu0.csv', 64, 16, 0.0, mode, threads, events_out)
+                actual0 = run_gpu(gpu, source, root / 'gpu0.csv', 64, 16, 0.0, mode, threads, events_out)
                 maximum = max(maximum, compare(expected0, actual0))
                 verify_events_against_rows(actual0, load_events_csv(events_out), 64, 16)
                 cases += 1
         # Exactly representable H=0 and H=1: inclusive threshold must fire.
         source.write_bytes(b'\x00\x00\x00\x01')
-        expected = run(ref, source, root / 'ref.csv', 2, 2, 1.0)
+        expected, _ = run(ref, source, root / 'ref.csv', 2, 2, 1.0, 'naive')
         for mode in ('naive', 'incremental'):
-            actual = run(gpu, source, root / 'gpu.csv', 2, 2, 1.0, mode, 256)
+            actual = run_gpu(gpu, source, root / 'gpu.csv', 2, 2, 1.0, mode, 256)
             maximum = max(maximum, compare(expected, actual))
             if actual[1][3] != 1:
                 raise AssertionError(f'Exact threshold boundary missing ({mode})')

@@ -129,7 +129,7 @@ docker run --rm --gpus all --shm-size=2g -v "${ProjectRoot}:/work" -w /work c05-
     cat results/logs/demo_events.csv
 
     echo ''
-    echo '>>> KROK 6: Generowanie wykresu profilu entropii dla 8-segmentowego pliku multi_segmented.bin...'
+    echo '>>> KROK 6: Generowanie wykresu profilu entropii dla 5-segmentowego pliku multi_segmented.bin...'
     ./build/entropy_omp --input datasets/multi_segmented.bin --window 4096 --step 1024 --threshold 0.8 --threads 12 --mode incremental --output results/logs/segmentation_multi.csv --events results/logs/segmentation_multi_events.csv
     python3 scripts/plot_entropy.py --csv results/logs/segmentation_multi.csv --events results/logs/segmentation_multi_events.csv --ground-truth datasets/ground_truth_boundaries.json --file-key multi_segmented.bin --output results/logs/demo_entropy_profile.png
 "

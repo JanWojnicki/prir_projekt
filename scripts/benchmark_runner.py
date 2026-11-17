@@ -177,6 +177,16 @@ def main():
     canon_mpi = 6 if 6 in args.mpi_processes else max(args.mpi_processes)
     canon_cuda = 256 if 256 in args.cuda_blocks else args.cuda_blocks[0]
 
+    def canonical_resources(implementation):
+        """Canonical threads (OMP), processes (MPI) or threads per block (CUDA)."""
+        if implementation.startswith('OMP'):
+            return canon_omp
+        if implementation.startswith('MPI'):
+            return canon_mpi
+        if implementation.startswith('CUDA'):
+            return canon_cuda
+        return 1
+
     config_set = set()
     if args.full_grid:
         for name in DATASETS:
@@ -195,9 +205,7 @@ def main():
             for divisor in args.step_divisors:
                 step = window // divisor
                 for implementation in implementations:
-                    p = (canon_omp if implementation.startswith('OMP') else
-                         canon_mpi if implementation.startswith('MPI') else
-                         canon_cuda if implementation.startswith('CUDA') else 1)
+                    p = canonical_resources(implementation)
                     config_set.add((implementation, 'mixed_segmented.bin', window, step, p))
         # 2. Strong scaling on mixed_segmented.bin at W=max_w, S=max_w//max_div for OMP and MPI.
         step_ref = max_w // max_div
@@ -215,9 +223,7 @@ def main():
                 step = window // max_div
                 for implementation in implementations:
                     if implementation.startswith('CUDA') or window == max_w:
-                        p = (canon_omp if implementation.startswith('OMP') else
-                             canon_mpi if implementation.startswith('MPI') else
-                             canon_cuda if implementation.startswith('CUDA') else 1)
+                        p = canonical_resources(implementation)
                         config_set.add((implementation, name, window, step, p))
         # 4. CUDA block-size sweep across all datasets at W=max_w, S=max_w//max_div.
         for name in DATASETS:
@@ -384,8 +390,7 @@ def main():
                         nbytes = mb * 1_000_000
                         w, s = 65536, 16384
                         for impl in ds_impls:
-                            p = (canon_omp if impl.startswith('OMP') else
-                                 canon_cuda if impl.startswith('CUDA') else 1)
+                            p = canonical_resources(impl)
                             for r in range(args.repeats + 1):
                                 vals, _ = run_binary(impl, sub_path, w, s, p, tmp / 'out.csv')
                                 if r == 0:
@@ -573,11 +578,9 @@ def main():
                 num_w = csv.DictWriter(num_f, fieldnames=num_fields)
                 num_w.writeheader()
                 for impl in implementations:
-                    p = (canon_omp if impl.startswith('OMP') else
-                         canon_mpi if impl.startswith('MPI') else
-                         canon_cuda if impl.startswith('CUDA') else 1)
                     out_c = tmp / f'num_{impl}.csv'
-                    run_binary(impl, args.datasets / 'mixed_segmented.bin', w, s, p, out_c)
+                    run_binary(impl, args.datasets / 'mixed_segmented.bin', w, s,
+                               canonical_resources(impl), out_c)
                     with out_c.open(newline='', encoding='utf-8') as f:
                         cur = [(float(r['entropy']), int(r['is_boundary'])) for r in csv.DictReader(f)]
                     diffs = [abs(a[0] - b[0]) for a, b in zip(ref_data, cur)]
@@ -608,11 +611,9 @@ def main():
         window = max_w
         step = window // max_div
         implementation = 'Ref-Incremental' if 'Ref-Incremental' in implementations else implementations[0]
-        p = (canon_omp if implementation.startswith('OMP') else
-             canon_mpi if implementation.startswith('MPI') else
-             canon_cuda if implementation.startswith('CUDA') else 1)
         if not (args.results / 'segmentation.csv').is_file():
-            run_binary(implementation, args.datasets / 'mixed_segmented.bin', window, step, p,
+            run_binary(implementation, args.datasets / 'mixed_segmented.bin', window, step,
+                       canonical_resources(implementation),
                        args.results / 'segmentation.csv',
                        events_path=args.results / 'segmentation_events.csv',
                        log_tag='segmentation_run')

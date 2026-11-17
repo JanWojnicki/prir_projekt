@@ -1,6 +1,9 @@
 {
 	"name": "C05 HPC Environment (CUDA 12.6 + OpenMP + OpenMPI)",
-	"image": "c05-env:latest",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"context": ".."
+	},
 	"runArgs": [
 		"--gpus=all",
 		"--shm-size=2g"
